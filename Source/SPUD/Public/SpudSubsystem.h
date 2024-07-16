@@ -61,28 +61,11 @@ enum class ESpudSaveSorting : uint8
 	Title
 };
 
-UCLASS(Transient)
-class SPUD_API USpudStreamingLevelWrapper : public UObject
-{
-	GENERATED_BODY()
-
-public:
-	UPROPERTY()
-	ULevelStreaming* LevelStreaming;
-
-	UFUNCTION()
-	void OnLevelShown();
-	UFUNCTION()
-	void OnLevelHidden();
-};
-
 /// Subsystem which controls our save games, and also the active game's persistent state (for streaming levels)
 UCLASS(Config=Engine)
 class SPUD_API USpudSubsystem : public UGameInstanceSubsystem, public FTickableGameObject
 {
 	GENERATED_BODY()
-
-	friend USpudStreamingLevelWrapper;
 
 public:
 	/// Event fired just before a game is loaded
@@ -143,15 +126,11 @@ public:
 	int32 ScreenshotHeight = 135;
 	FDelegateHandle OnScreenshotHandle;
 
-	/// If true, use the show/hide events of streaming levels to save/load, which is compatible with World Partition
-	/// You can set this to false to change to the legacy mode which requires ASpudStreamingVolume
-	UPROPERTY(BlueprintReadWrite, Config)
-	bool bSupportWorldPartition = true;
-
-
 protected:
 	FDelegateHandle OnPreLoadMapHandle;
 	FDelegateHandle OnPostLoadMapHandle;
+	FDelegateHandle OnLevelBeginMakingVisibleHandle;
+	FDelegateHandle OnLevelBeginMakingInvisibleHandle;
 	FDelegateHandle OnSeamlessTravelHandle;
 	int32 LoadUnloadRequests = 0;
 	bool FirstStreamRequestSinceMapLoad = true;
@@ -208,9 +187,6 @@ protected:
 	// Map of streaming level names to the requests to load them 
 	TMap<FName, FStreamLevelRequests> LevelRequests;
 
-	UPROPERTY()
-	TMap<ULevelStreaming*, USpudStreamingLevelWrapper*> MonitoredStreamingLevels;
-
 	bool ServerCheck(bool LogWarning) const;
 
 	UFUNCTION()
@@ -225,6 +201,11 @@ protected:
 	void SubscribeLevelObjectEvents(ULevel* Level);
 	void UnsubscribeLevelObjectEvents(ULevel* Level);
 	void UnsubscribeAllLevelObjectEvents();
+
+	UFUNCTION()
+	void OnLevelBeginMakingInvisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel);
+	UFUNCTION()
+	void OnLevelBeginMakingVisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel);
 	
 	// This is a latent callback and has to be BlueprintCallable
 	UFUNCTION(BlueprintCallable)
@@ -262,6 +243,10 @@ public:
 
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+
+	// Lyra Support: Should be called when experience is loaded from LyraExperienceManagerComponent
+	UFUNCTION()
+	void OnExperienceLoad(UWorld* World);
 
 	UFUNCTION(BlueprintPure)
 	bool IsLoadingGame() const { return CurrentState == ESpudSystemState::LoadingGame; }

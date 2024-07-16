@@ -343,6 +343,15 @@ FSpudNamedObjectData* USpudState::GetGlobalObjectData(const FString& ID, bool Au
 	return Ret;
 }
 
+bool USpudState::IsActorExperienceManaged(AActor* Actor) const
+{
+	if (Actor->Implements<USpudObject>())
+	{
+		return ISpudObject::Execute_IsExperienceManaged(Actor);
+	}
+	return false;
+}
+
 
 void USpudState::StoreGlobalObject(UObject* Obj)
 {
@@ -442,7 +451,7 @@ void USpudState::RestoreLevel(ULevel* Level)
 	// Restore existing actor state
 	for (auto Actor : Level->Actors)
 	{
-		if (SpudPropertyUtil::IsPersistentObject(Actor))
+		if (SpudPropertyUtil::IsPersistentObject(Actor) && !IsActorExperienceManaged(Actor))
 		{
 			RestoreActor(Actor, LevelData, &RuntimeObjectsByGuid);
 			auto Guid = SpudPropertyUtil::GetGuidProperty(Actor);
@@ -919,6 +928,49 @@ bool USpudState::RestoreSlowPropertyVisitor::VisitProperty(UObject* RootObject, 
 void USpudState::RestoreLoadedWorld(UWorld* World)
 {
 	RestoreLoadedWorld(World, false);
+}
+
+void USpudState::RestoreExperience(UWorld* World)
+{
+	for (auto& Level : World->GetLevels())
+	{
+		// Null levels possible
+		if (!IsValid(Level))
+		{
+			continue;
+		}
+
+		FString LevelName = GetLevelName(Level);
+		auto LevelData = GetLevelData(LevelName, false);
+
+		if (!LevelData.IsValid())
+		{
+			UE_LOG(LogSpudState, Log, TEXT("Skipping restore experience %s, no data (this may be fine)"), *LevelName);
+			continue;
+		}
+
+		// Mutex lock the level (load and unload events on streaming can be in loading threads)
+		FScopeLock LevelLock(&LevelData->Mutex);
+
+		UE_LOG(LogSpudState, Verbose, TEXT("RESTORE Experience %s - Start"), *LevelName);
+
+		// Experience restore only restores existing actor states
+		TMap<FGuid, UObject*> RuntimeObjectsByGuid;
+		for (auto Actor : Level->Actors)
+		{
+			if (SpudPropertyUtil::IsPersistentObject(Actor) && IsActorExperienceManaged(Actor))
+			{
+				RestoreActor(Actor, LevelData, &RuntimeObjectsByGuid);
+				auto Guid = SpudPropertyUtil::GetGuidProperty(Actor);
+				if (Guid.IsValid())
+				{
+					RuntimeObjectsByGuid.Add(Guid, Actor);
+				}
+			}
+		}
+
+		UE_LOG(LogSpudState, Verbose, TEXT("RESTORE Experience %s - Complete"), *LevelName);
+	}
 }
 
 void USpudState::RestoreLoadedWorld(UWorld* World, bool bSingleLevel, const FString& OnlyLevel)

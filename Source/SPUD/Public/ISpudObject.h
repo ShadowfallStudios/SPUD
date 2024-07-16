@@ -1,9 +1,9 @@
 #pragma once
 
-#include "CoreMinimal.h"
-#include "SpudState.h"
-
+#include "UObject/Interface.h"
 #include "ISpudObject.generated.h"
+
+class USpudState;
 
 UINTERFACE(MinimalAPI)
 class USpudObject : public UInterface
@@ -59,6 +59,10 @@ public:
 	// Returning an empty string means to use the object's native name.
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD Interface")
 	FString OverrideName() const; virtual FString OverrideName_Implementation() const { return FString(); }
+
+	// Allows marking actors as "experience managed", and defer their load process to experience loaded callback. This is useful for actors spawned by Experience Framework in Lyra, which happens a few frames after initial map load.
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD Interface")
+	bool IsExperienceManaged() const; virtual bool IsExperienceManaged_Implementation() const { return false; }
 };
 
 UINTERFACE(MinimalAPI)

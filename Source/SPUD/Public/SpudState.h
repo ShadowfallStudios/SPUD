@@ -103,6 +103,7 @@ protected:
 	FSpudNamedObjectData* GetGlobalObjectData(const UObject* Obj, bool AutoCreate);
 	FSpudNamedObjectData* GetGlobalObjectData(const FString& ID, bool AutoCreate);
 
+	bool IsActorExperienceManaged(AActor* Actor) const;
 	bool ShouldActorBeRespawnedOnRestore(AActor* Actor) const;
 	bool ShouldActorTransformBeRestored(AActor* Actor) const;
 	bool ShouldActorVelocityBeRestored(AActor* Actor) const;
@@ -250,6 +251,9 @@ public:
 
 	// Restores the world and all levels currently in it, on the assumption that it's already loaded into the correct map
 	void RestoreLoadedWorld(UWorld* World);
+
+	// Restores experience related actors in level
+	void RestoreExperience(UWorld* World);
 
 	/// Restores a single actor from  this state. Does not require the actor to implement ISpudObject.
 	/// NOTE: this is a limited function, it's less efficient than using RestoreLevel for multiple actors, and it

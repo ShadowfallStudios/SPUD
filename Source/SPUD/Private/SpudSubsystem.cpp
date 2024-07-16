@@ -4,6 +4,8 @@
 #include "Engine/LocalPlayer.h"
 #include "Kismet/GameplayStatics.h"
 #include "ImageUtils.h"
+#include "PlatformFeatures.h"
+#include "SaveGameSystem.h"
 #include "TimerManager.h"
 #include "HAL/FileManager.h"
 #include "Async/Async.h"
@@ -441,10 +443,36 @@ void USpudSubsystem::FinishSaveGame(const FString& SlotName, const FText& Title,
 	// Plus it writes it all to memory first, which we don't need another copy of. Write direct to file
 	// I'm not sure if the save game system doesn't do this because of some console hardware issues, but
 	// I'll worry about that at some later point
+
+	bool SaveOK = false;
+
+#if PLATFORM_PS5
+	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
+	{
+		// We need to convert the data to a TArray<uint8> first
+		TArray<uint8> Data;
+		FMemoryWriter MemoryWriter(Data);
+		State->SaveToArchive(MemoryWriter);
+
+		MemoryWriter.Close();
+
+		if (MemoryWriter.IsError() || MemoryWriter.IsCriticalError())
+		{
+			UE_LOG(LogSpudSubsystem, Error, TEXT("Error while saving game to %s"), *SlotName);
+			SaveOK = false;
+		}
+		else
+		{
+			// Save to slot
+			SaveOK = SaveSystem->SaveGame(false, *SlotName, 0, Data);
+			if(SaveOK)
+				UE_LOG(LogSpudSubsystem, Log, TEXT("Save to slot %s: Success"), *SlotName);
+		}
+	}
+#else
 	IFileManager& FileMgr = IFileManager::Get();
 	auto Archive = TUniquePtr<FArchive>(FileMgr.CreateFileWriter(*GetSaveGameFilePath(SlotName)));
 
-	bool SaveOK;
 	if(Archive)
 	{
 		State->SaveToArchive(*Archive);
@@ -467,9 +495,9 @@ void USpudSubsystem::FinishSaveGame(const FString& SlotName, const FText& Title,
 		UE_LOG(LogSpudSubsystem, Error, TEXT("Error while creating save game for slot %s"), *SlotName);
 		SaveOK = false;
 	}
+#endif
 
 	SaveComplete(SlotName, SaveOK);
-
 }
 
 void USpudSubsystem::SaveComplete(const FString& SlotName, bool bSuccess)
@@ -545,6 +573,7 @@ void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOpti
 		// TODO: ignore or queue?
 		UE_LOG(LogSpudSubsystem, Error, TEXT("TODO: Overlapping calls to save/load, resolve this"));
 		LoadComplete(SlotName, false);
+
 		return;
 	}
 
@@ -560,10 +589,45 @@ void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOpti
 
 	// TODO: async load
 
+#if PLATFORM_PS5
+	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
+	{
+		TArray<uint8> Data;
+		FMemoryReader MemoryReader(Data, false);
+		MemoryReader.Seek(0);
+		if(SaveSystem->LoadGame(false, *SlotName, 0, Data))
+		{
+			// Load the data from the memory reader
+			State->LoadFromArchive(MemoryReader, false);
+			// Close Buffer for cache errors
+			MemoryReader.Close();
+			if (MemoryReader.IsError() || MemoryReader.IsCriticalError())
+			{
+				UE_LOG(LogSpudSubsystem, Error, TEXT("Error while loading game from %s"), *SlotName);
+				LoadComplete(SlotName, false);
+				return;
+			}
+			UE_LOG(LogSpudSubsystem, Error, TEXT("LoadGame: Load Game Returned false, check for inner errors"));
+		}
+		else
+		{
+			Data.Empty();
+			MemoryReader.Close();
+			UE_LOG(LogSpudSubsystem, Error, TEXT("LoadGame: Load Game Returned false, check for inner errors"));
+			LoadComplete(SlotName, false);
+			return;
+		}
+	}
+	else
+	{
+		UE_LOG(LogSpudSubsystem, Error, TEXT("LoadGame: Platform save system null, cannot load game"));
+		LoadComplete(SlotName, false);
+		return;
+	}
+#else
 	IFileManager& FileMgr = IFileManager::Get();
-	auto Archive = TUniquePtr<FArchive>(FileMgr.CreateFileReader(*GetSaveGameFilePath(SlotName)));
 
-	if(Archive)
+	if(auto Archive = TUniquePtr<FArchive>(FileMgr.CreateFileReader(*GetSaveGameFilePath(SlotName))))
 	{
 		// Load only global data and page in level data as needed
 		State->LoadFromArchive(*Archive, false);
@@ -582,6 +646,7 @@ void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOpti
 		LoadComplete(SlotName, false);
 		return;
 	}
+#endif
 
 	// Just do the reverse of what we did
 	// Global objects first before map, these should be only objects which survive map load
@@ -617,8 +682,18 @@ bool USpudSubsystem::DeleteSave(const FString& SlotName)
 	if (!ServerCheck(true))
 		return false;
 	
+#if PLATFORM_PS5
+	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
+		return SaveSystem->DeleteGame(false, *SlotName, 0);
+	else
+	{
+		UE_LOG(LogSpudSubsystem, Error, TEXT("DeleteSave: Platform save system null, cannot delete game"));
+		return false;
+	}
+#else
 	IFileManager& FileMgr = IFileManager::Get();
 	return FileMgr.Delete(*GetSaveGameFilePath(SlotName), false, true);
+#endif
 }
 
 void USpudSubsystem::AddPersistentGlobalObject(UObject* Obj)
@@ -831,23 +906,25 @@ struct FSaveSorter
 
 TArray<USpudSaveGameInfo*> USpudSubsystem::GetSaveGameList(bool bIncludeQuickSave, bool bIncludeAutoSave, ESpudSaveSorting Sorting)
 {
-
 	TArray<FString> SaveFiles;
 	ListSaveGameFiles(SaveFiles);
 
 	TArray<USpudSaveGameInfo*> Ret;
-	for (auto && File : SaveFiles)
+	for (auto&& File : SaveFiles)
 	{
+#if PLATFORM_PS5
+		FString SlotName = File; // Because it doesn't have an extension
+#else
 		FString SlotName = FPaths::GetBaseFilename(File);
+#endif
 
 		if ((!bIncludeQuickSave && SlotName == SPUD_QUICKSAVE_SLOTNAME) ||
 			(!bIncludeAutoSave && SlotName == SPUD_AUTOSAVE_SLOTNAME))
 		{
-			continue;			
+			continue;
 		}
 
-		auto Info = GetSaveGameInfo(SlotName);
-		if (Info)
+		if (auto Info = GetSaveGameInfo(SlotName))
 			Ret.Add(Info);
 	}
 
@@ -861,6 +938,30 @@ TArray<USpudSaveGameInfo*> USpudSubsystem::GetSaveGameList(bool bIncludeQuickSav
 
 USpudSaveGameInfo* USpudSubsystem::GetSaveGameInfo(const FString& SlotName)
 {
+#if PLATFORM_PS5
+	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
+	{
+		TArray<uint8> Data;
+		FMemoryReader MemoryReader(Data, false);
+		MemoryReader.Seek(0);
+		if (SaveSystem->LoadGame(false, *SlotName, 0, Data))
+		{
+			auto Info = NewObject<USpudSaveGameInfo>();
+			USpudState::LoadSaveInfoFromArchive(MemoryReader, *Info);
+			Info->SlotName = SlotName;
+
+			return Info;
+		}
+
+		//Load Failed
+		MemoryReader.FlushCache();
+		Data.Empty();
+		MemoryReader.Close();
+	}
+	//Platform Save System is null
+	UE_LOG(LogSpudSubsystem, Error, TEXT("GetSaveGameInfo: Platform save system is null, cannot load game"));
+	return nullptr;
+#else
 	IFileManager& FM = IFileManager::Get();
 	// We want to parse just the very first part of the file, not all of it
 	FString AbsoluteFilename = FPaths::Combine(GetSaveGameDirectory(), SlotName + ".sav");
@@ -871,7 +972,7 @@ USpudSaveGameInfo* USpudSubsystem::GetSaveGameInfo(const FString& SlotName)
 		UE_LOG(LogSpudSubsystem, Error, TEXT("Unable to open %s for reading info"), *AbsoluteFilename);
 		return nullptr;
 	}
-		
+
 	auto Info = NewObject<USpudSaveGameInfo>();
 	Info->SlotName = SlotName;
 
@@ -879,6 +980,7 @@ USpudSaveGameInfo* USpudSubsystem::GetSaveGameInfo(const FString& SlotName)
 	Archive->Close();
 		
 	return Info;
+#endif
 }
 
 USpudSaveGameInfo* USpudSubsystem::GetLatestSaveGame()
@@ -916,9 +1018,16 @@ FString USpudSubsystem::GetSaveGameFilePath(const FString& SlotName)
 
 void USpudSubsystem::ListSaveGameFiles(TArray<FString>& OutSaveFileList)
 {
+#if PLATFORM_PS5
+	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
+	{
+		SaveSystem->GetSaveGameNames(OutSaveFileList,0);
+	}
+#else
 	IFileManager& FM = IFileManager::Get();
 
-	FM.FindFiles(OutSaveFileList, *GetSaveGameDirectory(), TEXT(".sav"));	
+	FM.FindFiles(OutSaveFileList, *GetSaveGameDirectory(), TEXT(".sav"));
+#endif
 }
 
 FString USpudSubsystem::GetActiveGameFolder()

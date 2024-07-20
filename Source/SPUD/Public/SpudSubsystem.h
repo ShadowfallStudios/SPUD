@@ -12,23 +12,23 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(LogSpudSubsystem, Verbose, Verbose);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreLoadGame, const FString&, SlotName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSpudPostLoadGame, const FString&, SlotName, bool, bSuccess);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreSaveGame, const FString&, SlotName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSpudPostSaveGame, const FString&, SlotName, bool, bSuccess);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreLoadGame, const FString& /** SlotName */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FSpudPostLoadGame, const FString& /** SlotName */, bool /** bSuccess */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreSaveGame, const FString& /** SlotName */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FSpudPostSaveGame, const FString& /** SlotName */, bool /** bSuccess */);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreLevelStore, const FString&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSpudPostLevelStore, const FString&, LevelName, bool, bSuccess);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreLevelRestore, const FString&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSpudPostLevelRestore, const FString&, LevelName, bool, bSuccess);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreLevelStore, const FString& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FSpudPostLevelStore, const FString& /** LevelName */, bool /** bSuccess */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreLevelRestore, const FString& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FSpudPostLevelRestore, const FString& /** LevelName */, bool /** bSuccess */);
 
 /// Helper delegates to allow blueprints to listen in on map transitions & streaming if they want
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreTravelToNewMap, const FString&, NextMapName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSpudPostTravelToNewMap);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreLoadStreamingLevel, const FName&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPostLoadStreamingLevel, const FName&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreUnloadStreamingLevel, const FName&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPostUnloadStreamingLevel, const FName&, LevelName);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreTravelToNewMap, const FString& /** NextMapName */);
+DECLARE_MULTICAST_DELEGATE(FSpudPostTravelToNewMap);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreLoadStreamingLevel, const FName& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPostLoadStreamingLevel, const FName& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreUnloadStreamingLevel, const FName& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPostUnloadStreamingLevel, const FName& /** LevelName */);
 
 // Callbacks passed to functions
 DECLARE_DYNAMIC_DELEGATE_RetVal_OneParam(bool, FSpudUpgradeSaveDelegate, class USpudState*, SaveState);
@@ -69,48 +69,34 @@ class SPUD_API USpudSubsystem : public UGameInstanceSubsystem, public FTickableG
 
 public:
 	/// Event fired just before a game is loaded
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreLoadGame PreLoadGame;
 	/// Event fired just after a game has finished loading
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostLoadGame PostLoadGame;
 	/// Event fired just before a game is saved
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreSaveGame PreSaveGame;
 	/// Event fired just after a game finished saving
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostSaveGame PostSaveGame;
 	/// Event fired just before we write the contents of a level to the state database
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreLevelStore PreLevelStore;
 	/// Event fired just after we've written the contents of a level to the state database
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostLevelStore PostLevelStore;
 	/// Event fired just before we're about to populate a loaded level from the state database
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreLevelRestore PreLevelRestore;
 	/// Event fired just after we've finished populating a loaded level from the state database
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostLevelRestore PostLevelRestore;
 
 	/// Event fired just prior to travelling to a new map (convenience for blueprints mainly, who don't have access to FCoreDelegates)
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreTravelToNewMap PreTravelToNewMap;
 	/// Event fired just after travelling to a new map (convenience for blueprints mainly, who don't have access to FCoreDelegates)
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostTravelToNewMap PostTravelToNewMap;
 	/// Event fired just before this subsystem loads a streaming level
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreLoadStreamingLevel PreLoadStreamingLevel;
 	/// Event fired just after a streaming level has loaded, but BEFORE any state has been restored
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostLoadStreamingLevel PostLoadStreamingLevel;
 	/// Event fired just before this subsystem unloads a streaming level, BEFORE any state has been stored if needed
 	/// This is ALMOST the same as PreLevelStore, except when loading a game that's not called, but this is
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreUnloadStreamingLevel PreUnloadStreamingLevel;
 	/// Event fired just after a streaming level has unloaded
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostUnloadStreamingLevel PostUnloadStreamingLevel;
 
 	/// The time delay after the last request for a streaming level is withdrawn, that the level will be unloaded
@@ -155,11 +141,14 @@ protected:
 
 	// True while restoring game state, either by loading a game or restoring the state of a streamed-in level.
 	UPROPERTY(BlueprintReadOnly)
-	bool IsRestoringState = false;
+	bool bIsRestoringState = false;
 
 	/// True when system shutdown has been started
 	UPROPERTY(BlueprintReadOnly)
 	bool bIsTearingDown = false;
+
+	UPROPERTY(BlueprintReadOnly)
+	TMap<FName, bool> LevelStreamingRestoreStates;
 
 	// The currently active game state
 	UPROPERTY()
@@ -244,12 +233,22 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
-	// Lyra Support: Should be called when experience is loaded from LyraExperienceManagerComponent
-	UFUNCTION()
-	void OnExperienceLoad(UWorld* World);
+	// Loads experience managed actor data. Good idea to call from ULyraExperienceManagerComponent::OnExperienceFullLoadCompleted
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
+	void LoadExperienceData(UWorld* World);
+
+	// Manually mark actor as destroyed
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
+	void MarkActorDestroyed(AActor* Actor);
+
+	UFUNCTION(BlueprintPure)
+	bool IsRestoringState() const { return bIsRestoringState; }
 
 	UFUNCTION(BlueprintPure)
 	bool IsLoadingGame() const { return CurrentState == ESpudSystemState::LoadingGame; }
+
+	UFUNCTION(BlueprintPure)
+	bool IsStreamedLevelRestoring(ULevel* Level) const;
 
 	UFUNCTION(BlueprintPure)
     bool IsSavingGame() const { return CurrentState == ESpudSystemState::SavingGame; }

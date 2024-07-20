@@ -17,6 +17,8 @@ DEFINE_LOG_CATEGORY(LogSpudSubsystem)
 #define SPUD_QUICKSAVE_SLOTNAME "__QuickSave__"
 #define SPUD_AUTOSAVE_SLOTNAME "__AutoSave__"
 
+static bool bEnableSPUD = true;
+static FAutoConsoleVariableRef CVarEnableSPUD(TEXT("SPUD.Enable"), bEnableSPUD, TEXT("Can be used to debug disable state of plugin by setting to false"), ECVF_Cheat);
 
 void USpudSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -89,6 +91,11 @@ void USpudSubsystem::NewGame(bool bCheckServerOnly, bool bAfterLevelLoad)
 
 bool USpudSubsystem::ServerCheck(bool LogWarning) const
 {
+	if (!bEnableSPUD)
+	{
+		return false;
+	}
+
 	// Note: must only call this when game mode is present! Don't call when unloading
 	// On missing world etc we just assume true for safety
 	auto GI = GetGameInstance();
@@ -112,7 +119,7 @@ void USpudSubsystem::EndGame()
 
 	UnsubscribeAllLevelObjectEvents();
 	CurrentState = ESpudSystemState::Disabled;
-	IsRestoringState = false;
+	bIsRestoringState = false;
 }
 
 void USpudSubsystem::AutoSaveGame(FText Title, bool bTakeScreenshot, const USpudCustomSaveInfo* ExtraInfo)
@@ -208,7 +215,6 @@ void USpudSubsystem::OnPostLoadMap(UWorld* World)
 	if (!ServerCheck(false))
 		return;
 
-
 	switch(CurrentState)
 	{
 	case ESpudSystemState::NewGameOnNextLevel:
@@ -225,6 +231,7 @@ void USpudSubsystem::OnPostLoadMap(UWorld* World)
 		}
 		break;
 	case ESpudSystemState::RunningIdle:
+		break;
 	case ESpudSystemState::LoadingGame:
 		// This is called when a new map is loaded
 		// In all cases, we try to load the state
@@ -238,54 +245,69 @@ void USpudSubsystem::OnPostLoadMap(UWorld* World)
 			       TEXT("OnPostLoadMap restore: %s"),
 			       *LevelName);
 
-			IsRestoringState = true;
+			bIsRestoringState = true;
 
 			const auto State = GetActiveState();
 			PreLevelRestore.Broadcast(LevelName);
 			State->RestoreLoadedWorld(World);
 			PostLevelRestore.Broadcast(LevelName, true);
 			
-			IsRestoringState = false;
+			bIsRestoringState = false;
 			// We need to subscribe to ALL currently loaded levels, because of "AlwaysLoaded" sublevels
 			SubscribeAllLevelObjectEvents();
 
-			// We don't complete load process here. Experience will finish the load after a few frames via @USpudSubsystem::OnExperienceLoad
+			if (CurrentState == ESpudSystemState::LoadingGame)
+			{
+				LoadComplete(SlotNameInProgress, true);
+				UE_LOG(LogSpudSubsystem, Log, TEXT("Load: Success"));
+			}
 		}
 		break;
 	default:
 		break;
-			
 	}
 
 	PostTravelToNewMap.Broadcast();
 }
 
-void USpudSubsystem::OnExperienceLoad(UWorld* World)
+void USpudSubsystem::LoadExperienceData(UWorld* World)
 {
 	if (!ServerCheck(false))
 	{
 		return;
 	}
 
-	if (CurrentState == ESpudSystemState::LoadingGame)
+	const ESpudSystemState PrevState = CurrentState;
+	CurrentState = ESpudSystemState::LoadingGame;
+
+	const FString LevelName = UGameplayStatics::GetCurrentLevelName(World);
+	UE_LOG(LogSpudSubsystem,
+		   Verbose,
+		   TEXT("LoadExperienceData restore: %s"),
+		   *LevelName);
+
+	bIsRestoringState = true;
+	const auto State = GetActiveState();
+	State->RestoreExperience(World);
+	bIsRestoringState = false;
+
+	CurrentState = PrevState;
+}
+
+void USpudSubsystem::MarkActorDestroyed(AActor* Actor)
+{
+	if (!ServerCheck(false))
 	{
-		if (IsValid(World))
-		{
-			const FString LevelName = UGameplayStatics::GetCurrentLevelName(World);
-			UE_LOG(LogSpudSubsystem,
-				   Verbose,
-				   TEXT("OnExperienceLoad restore: %s"),
-				   *LevelName);
-
-			IsRestoringState = true;
-			const auto State = GetActiveState();
-			State->RestoreExperience(World);
-			IsRestoringState = false;
-		}
-
-		LoadComplete(SlotNameInProgress, true);
-		UE_LOG(LogSpudSubsystem, Log, TEXT("Load: Success"));
+		return;
 	}
+	OnActorDestroyed(Actor);
+}
+
+bool USpudSubsystem::IsStreamedLevelRestoring(ULevel* Level) const
+{
+	const FString LevelName = USpudState::GetLevelName(Level);
+	const bool* FoundState = LevelStreamingRestoreStates.Find(FName(LevelName));
+	return FoundState && *FoundState;
 }
 
 void USpudSubsystem::SaveGame(const FString& SlotName, const FText& Title, bool bTakeScreenshot, const USpudCustomSaveInfo* ExtraInfo)
@@ -488,6 +510,8 @@ void USpudSubsystem::HandleLevelLoaded(FName LevelName)
 	AsyncTask(ENamedThreads::GameThread, [this, LevelName]()
 	{
 		PostLoadStreamLevelGameThread(LevelName);
+		LevelStreamingRestoreStates.Add(LevelName, false);
+		PostLoadStreamingLevel.Broadcast(LevelName);
 	});
 }
 
@@ -544,7 +568,7 @@ void USpudSubsystem::LoadGame(const FString& SlotName)
 	}
 
 	CurrentState = ESpudSystemState::LoadingGame;
-	IsRestoringState = true;
+	bIsRestoringState = true;
 	PreLoadGame.Broadcast(SlotName);
 
 	UE_LOG(LogSpudSubsystem, Verbose, TEXT("Loading Game from slot %s"), *SlotName);		
@@ -639,7 +663,7 @@ void USpudSubsystem::LoadGame(const FString& SlotName)
 void USpudSubsystem::LoadComplete(const FString& SlotName, bool bSuccess)
 {
 	CurrentState = ESpudSystemState::RunningIdle;
-	IsRestoringState = false;
+	bIsRestoringState = false;
 	SlotNameInProgress = "";
 	PostLoadGame.Broadcast(SlotName, bSuccess);
 }
@@ -845,7 +869,7 @@ void USpudSubsystem::PostLoadStreamLevelGameThread(FName LevelName)
 			return;
 		}
 
-		IsRestoringState = true;
+		bIsRestoringState = true;
 
 		PreLevelRestore.Broadcast(LevelName.ToString());
 		// It's important to note that this streaming level won't be added to UWorld::Levels yet
@@ -862,7 +886,7 @@ void USpudSubsystem::PostLoadStreamLevelGameThread(FName LevelName)
 		SubscribeLevelObjectEvents(Level);
 		PostLevelRestore.Broadcast(LevelName.ToString(), true);
 
-		IsRestoringState = false;
+		bIsRestoringState = false;
 	}
 }
 
@@ -897,7 +921,7 @@ void USpudSubsystem::UnloadStreamLevel(FName LevelName)
 void USpudSubsystem::ForceReset()
 {
 	CurrentState = ESpudSystemState::RunningIdle;
-	IsRestoringState = false;
+	bIsRestoringState = false;
 }
 
 void USpudSubsystem::SetUserDataModelVersion(int32 Version)
@@ -975,11 +999,13 @@ void USpudSubsystem::OnLevelBeginMakingVisible(UWorld* World, const ULevelStream
 		return;
 	}
 
-	const FString LevelName = USpudState::GetLevelName(LoadedLevel);
-	PreLoadStreamingLevel.Broadcast(FName(LevelName));
-	UE_LOG(LogSpudSubsystem, Verbose, TEXT("Level shown: %s"), *LevelName);
-	HandleLevelLoaded(LoadedLevel);
-	PostLoadStreamingLevel.Broadcast(FName(LevelName));
+	const FString LevelNameStr = USpudState::GetLevelName(LoadedLevel);
+	UE_LOG(LogSpudSubsystem, Verbose, TEXT("Level shown: %s"), *LevelNameStr);
+
+	const FName LevelName = FName(LevelNameStr);
+	LevelStreamingRestoreStates.Add(LevelName, true);
+	PreLoadStreamingLevel.Broadcast(LevelName);
+	HandleLevelLoaded(LevelName);
 }
 
 void USpudSubsystem::SubscribeLevelObjectEvents(ULevel* Level)

@@ -60,9 +60,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD Interface")
 	FString OverrideName() const; virtual FString OverrideName_Implementation() const { return FString(); }
 
-	// Allows marking actors as "experience managed", and defer their load process to experience loaded callback. This is useful for actors spawned by Experience Framework in Lyra, which happens a few frames after initial map load.
+	// Allows skipping loading actors during level restore. Use this if you need to restore an actor individually after actual load process.
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD Interface")
-	bool IsExperienceManaged() const; virtual bool IsExperienceManaged_Implementation() const { return false; }
+	bool ShouldSkipDuringLevelRestore() const; virtual bool ShouldSkipDuringLevelRestore_Implementation() const { return false; }
 };
 
 UINTERFACE(MinimalAPI)

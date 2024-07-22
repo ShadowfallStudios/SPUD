@@ -99,11 +99,6 @@ public:
 	/// Event fired just after a streaming level has unloaded
 	FSpudPostUnloadStreamingLevel PostUnloadStreamingLevel;
 
-	/// The time delay after the last request for a streaming level is withdrawn, that the level will be unloaded
-	/// This is used to reduce load/unload thrashing at boundaries
-	UPROPERTY(BlueprintReadWrite, Config)
-	float StreamLevelUnloadDelay = 3;
-
 	/// The desired width of screenshots taken for save games
 	UPROPERTY(BlueprintReadWrite, Config)
 	int32 ScreenshotWidth = 240;
@@ -112,19 +107,11 @@ public:
 	int32 ScreenshotHeight = 135;
 	FDelegateHandle OnScreenshotHandle;
 
+	// If false, we won't try to save current persistent level's state while jumping/traveling into another persistent level.
+	UPROPERTY(BlueprintReadWrite, Config)
+	bool bSaveLevelStateWhileTraveling = false;
+
 protected:
-	FDelegateHandle OnPreLoadMapHandle;
-	FDelegateHandle OnPostLoadMapHandle;
-	FDelegateHandle OnLevelBeginMakingVisibleHandle;
-	FDelegateHandle OnLevelBeginMakingInvisibleHandle;
-	FDelegateHandle OnSeamlessTravelHandle;
-	int32 LoadUnloadRequests = 0;
-	bool FirstStreamRequestSinceMapLoad = true;
-	TMap<int32, FName> LevelsPendingLoad;
-	TMap<int32, FName> LevelsPendingUnload;
-	FCriticalSection LevelsPendingLoadMutex;
-	FCriticalSection LevelsPendingUnloadMutex;
-	FTimerHandle StreamLevelUnloadTimerHandle;
 	float ScreenshotTimeout = 0;	
 	FString SlotNameInProgress;
 	FText TitleInProgress;
@@ -162,26 +149,12 @@ protected:
 		return ActiveState;
 	}
 
-	struct FStreamLevelRequests
-	{
-		TArray<TWeakObjectPtr<>> Requesters;
-		bool bPendingUnload;
-		float LastRequestExpiredTime;
-
-		FStreamLevelRequests(): bPendingUnload(false), LastRequestExpiredTime(0)
-		{
-		}
-	};
-	
-	// Map of streaming level names to the requests to load them 
-	TMap<FName, FStreamLevelRequests> LevelRequests;
-
 	bool ServerCheck(bool LogWarning) const;
 
 	UFUNCTION()
 	void OnPreLoadMap(const FString& MapName);
 	UFUNCTION()
-	void OnSeamlessTravelTransition(UWorld* World);
+	void OnSeamlessTravelStart(UWorld* World, const FString& MapName);
 	UFUNCTION()
 	void OnPostLoadMap(UWorld* World);
 	UFUNCTION()
@@ -197,10 +170,6 @@ protected:
 	void OnLevelBeginMakingVisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel);
 	
 	// This is a latent callback and has to be BlueprintCallable
-	UFUNCTION(BlueprintCallable)
-	void PostLoadStreamLevel(int32 LinkID);
-	UFUNCTION(BlueprintCallable)
-    void PostUnloadStreamLevel(int32 LinkID);
 	UFUNCTION(BlueprintCallable)
     void PostLoadStreamLevelGameThread(FName LevelName);
 	UFUNCTION(BlueprintCallable)
@@ -222,20 +191,14 @@ protected:
 	void HandleLevelLoaded(ULevel* Level) { HandleLevelLoaded(FName(USpudState::GetLevelName(Level))); }
 	void HandleLevelUnloaded(ULevel* Level);
 
-	void LoadStreamLevel(FName LevelName, bool Blocking);
-	void StartUnloadTimer();
-	void StopUnloadTimer();
-	void CheckStreamUnload();
-	void UnloadStreamLevel(FName LevelName);
-
 public:
 
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
-	// Loads experience managed actor data. Good idea to call from ULyraExperienceManagerComponent::OnExperienceFullLoadCompleted
+	// Loads specific actor from active state. If bAsGameLoad is true, we'll try to load the actor as we were loading a full level save.
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-	void LoadExperienceData(UWorld* World);
+	void LoadActorData(AActor* Actor, bool bAsGameLoad = false);
 
 	// Manually mark actor as destroyed
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
@@ -367,15 +330,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
 	void ClearLevelState(const FString& LevelName);
-
-	/// Make a request that a streaming level is loaded. Won't load if already loaded, but will
-	/// record the request count so that unloading is done when all requests are withdrawn.
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-	void AddRequestForStreamingLevel(UObject* Requester, FName LevelName, bool BlockingLoad);
-	/// Withdraw a request for a streaming level. Once all requesters have rescinded their requests, the
-	/// streaming level will be considered ready to be unloaded.
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-	void WithdrawRequestForStreamingLevel(UObject* Requester, FName LevelName);
 
 	/// Get the list of the save games with metadata
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)

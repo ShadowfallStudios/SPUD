@@ -697,8 +697,7 @@ void USpudState::RestoreCoreActorData(AActor* Actor, const FSpudCoreActorData& F
 
 
 		auto Pawn = Cast<APawn>(Actor);
-		if (Pawn && Pawn->IsPlayerControlled() &&
-			!GetSpudSubsystem(Pawn->GetWorld())->IsLoadingGame())
+		if (Pawn && Pawn->IsPlayerControlled() && !GetSpudSubsystem(Pawn->GetWorld())->IsLoadingGame())
 		{
 			// This is a player-controlled pawn, and we're not loading the game
 			// That means this was a map transition. In this case we do NOT want to reset the pawn's position
@@ -709,9 +708,10 @@ void USpudState::RestoreCoreActorData(AActor* Actor, const FSpudCoreActorData& F
 			
 		}
 
+		const bool bRestoreActorTransform = ShouldActorTransformBeRestored(Actor);
+
 		const auto RootComp = Actor->GetRootComponent();
-		if (RootComp && RootComp->Mobility == EComponentMobility::Movable &&
-			ShouldActorTransformBeRestored(Actor))
+		if (RootComp && RootComp->Mobility == EComponentMobility::Movable && bRestoreActorTransform)
 		{
 			// Only set the actor transform if movable, to avoid editor warnings about static/stationary objects
 			Actor->SetActorTransform(XForm, false, nullptr, ETeleportType::ResetPhysics);
@@ -737,7 +737,7 @@ void USpudState::RestoreCoreActorData(AActor* Actor, const FSpudCoreActorData& F
 			}
 		}
 
-		if (Pawn)
+		if (bRestoreActorTransform && Pawn)
 		{
 			if (auto Controller = Pawn->GetController())
 			{

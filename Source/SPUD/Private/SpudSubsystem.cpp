@@ -4,18 +4,18 @@
 #include "Engine/LocalPlayer.h"
 #include "Kismet/GameplayStatics.h"
 #include "ImageUtils.h"
-#include "PlatformFeatures.h"
-#include "SaveGameSystem.h"
 #include "TimerManager.h"
 #include "HAL/FileManager.h"
 #include "Async/Async.h"
 #include "Streaming/LevelStreamingDelegates.h"
 
+#if PLATFORM_PS5
+#include "PlatformFeatures.h"
+#include "SaveGameSystem.h"
+#endif
+
 DEFINE_LOG_CATEGORY(LogSpudSubsystem)
 
-
-#define SPUD_QUICKSAVE_SLOTNAME "__QuickSave__"
-#define SPUD_AUTOSAVE_SLOTNAME "__AutoSave__"
 
 static bool bEnableSPUD = true;
 static FAutoConsoleVariableRef CVarEnableSPUD(TEXT("SPUD.Enable"), bEnableSPUD, TEXT("Can be used to debug disable state of plugin by setting to false"), ECVF_Cheat);
@@ -120,7 +120,7 @@ void USpudSubsystem::EndGame()
 
 void USpudSubsystem::AutoSaveGame(FText Title, bool bTakeScreenshot, const USpudCustomSaveInfo* ExtraInfo)
 {
-	SaveGame(SPUD_AUTOSAVE_SLOTNAME,
+	SaveGame(AutoSaveSlotName,
 		Title.IsEmpty() ? NSLOCTEXT("Spud", "AutoSaveTitle", "Autosave") : Title,
 		bTakeScreenshot,
 		ExtraInfo);
@@ -128,7 +128,7 @@ void USpudSubsystem::AutoSaveGame(FText Title, bool bTakeScreenshot, const USpud
 
 void USpudSubsystem::QuickSaveGame(FText Title, bool bTakeScreenshot, const USpudCustomSaveInfo* ExtraInfo)
 {
-	SaveGame(SPUD_QUICKSAVE_SLOTNAME,
+	SaveGame(QuickSaveSlotName,
 		Title.IsEmpty() ? NSLOCTEXT("Spud", "QuickSaveTitle", "Quick Save") : Title,
 		bTakeScreenshot,
 		ExtraInfo);
@@ -136,18 +136,18 @@ void USpudSubsystem::QuickSaveGame(FText Title, bool bTakeScreenshot, const USpu
 
 void USpudSubsystem::QuickLoadGame(const FString& TravelOptions)
 {
-	LoadGame(SPUD_QUICKSAVE_SLOTNAME, TravelOptions);
+	LoadGame(QuickSaveSlotName, TravelOptions);
 }
 
 
 bool USpudSubsystem::IsQuickSave(const FString& SlotName)
 {
-	return SlotName == SPUD_QUICKSAVE_SLOTNAME;
+	return SlotName == QuickSaveSlotName;
 }
 
 bool USpudSubsystem::IsAutoSave(const FString& SlotName)
 {
-	return SlotName == SPUD_AUTOSAVE_SLOTNAME;
+	return SlotName == AutoSaveSlotName;
 }
 
 void USpudSubsystem::NotifyLevelLoadedExternally(FName LevelName)
@@ -560,7 +560,7 @@ void USpudSubsystem::StoreLevel(ULevel* Level, bool bRelease, bool bBlocking)
 	PostLevelStore.Broadcast(LevelName, true);
 }
 
-void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOptions)
+void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOptions, bool bAutoTravelLevel)
 {
 	if (!ServerCheck(true))
 	{
@@ -663,9 +663,12 @@ void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOpti
 
 	// This is deferred, final load process will happen in PostLoadMap
 	SlotNameInProgress = SlotName;
-	UE_LOG(LogSpudSubsystem, Verbose, TEXT("(Re)loading map: %s"), *State->GetPersistentLevel());
-	
-	UGameplayStatics::OpenLevel(GetWorld(), FName(State->GetPersistentLevel()), true, TravelOptions);
+
+	if (bAutoTravelLevel)
+	{
+		UE_LOG(LogSpudSubsystem, Verbose, TEXT("(Re)loading map: %s"), *State->GetPersistentLevel());
+		UGameplayStatics::OpenLevel(GetWorld(), FName(State->GetPersistentLevel()), true, TravelOptions);
+	}
 }
 
 
@@ -918,8 +921,8 @@ TArray<USpudSaveGameInfo*> USpudSubsystem::GetSaveGameList(bool bIncludeQuickSav
 		FString SlotName = FPaths::GetBaseFilename(File);
 #endif
 
-		if ((!bIncludeQuickSave && SlotName == SPUD_QUICKSAVE_SLOTNAME) ||
-			(!bIncludeAutoSave && SlotName == SPUD_AUTOSAVE_SLOTNAME))
+		if ((!bIncludeQuickSave && SlotName == QuickSaveSlotName) ||
+			(!bIncludeAutoSave && SlotName == AutoSaveSlotName))
 		{
 			continue;
 		}
@@ -976,10 +979,10 @@ USpudSaveGameInfo* USpudSubsystem::GetSaveGameInfo(const FString& SlotName)
 	auto Info = NewObject<USpudSaveGameInfo>();
 	Info->SlotName = SlotName;
 
-	USpudState::LoadSaveInfoFromArchive(*Archive, *Info);
+	const bool bResult = USpudState::LoadSaveInfoFromArchive(*Archive, *Info);
 	Archive->Close();
-		
-	return Info;
+
+	return bResult ? Info : nullptr;
 #endif
 }
 
@@ -998,12 +1001,12 @@ USpudSaveGameInfo* USpudSubsystem::GetLatestSaveGame()
 
 USpudSaveGameInfo* USpudSubsystem::GetQuickSaveGame()
 {
-	return GetSaveGameInfo(SPUD_QUICKSAVE_SLOTNAME);
+	return GetSaveGameInfo(QuickSaveSlotName);
 }
 
 USpudSaveGameInfo* USpudSubsystem::GetAutoSaveGame()
 {
-	return GetSaveGameInfo(SPUD_AUTOSAVE_SLOTNAME);
+	return GetSaveGameInfo(AutoSaveSlotName);
 }
 
 FString USpudSubsystem::GetSaveGameDirectory()

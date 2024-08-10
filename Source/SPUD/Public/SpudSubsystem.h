@@ -111,6 +111,12 @@ public:
 	UPROPERTY(BlueprintReadWrite, Config)
 	bool bSaveLevelStateWhileTraveling = false;
 
+	UPROPERTY(BlueprintReadOnly)
+	FString QuickSaveSlotName = FString("__QuickSave__");
+
+	UPROPERTY(BlueprintReadOnly)
+	FString AutoSaveSlotName = FString("__AutoSave__");
+
 protected:
 	float ScreenshotTimeout = 0;	
 	FString SlotNameInProgress;
@@ -289,7 +295,7 @@ public:
 	 * @param TravelOptions Options string to include in the travel URL e.g. "Listen"
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-    void LoadGame(const FString& SlotName, const FString& TravelOptions = FString(TEXT("")));
+    void LoadGame(const FString& SlotName, const FString& TravelOptions = FString(TEXT("")), bool bAutoTravelLevel = true);
 
 	/// Delete the save game in a given slot
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)

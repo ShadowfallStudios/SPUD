@@ -9,13 +9,14 @@
 #include "Async/Async.h"
 #include "Streaming/LevelStreamingDelegates.h"
 
-#if PLATFORM_PS5
+#define USE_UE_SAVE_SYSTEM (PREFER_UE_SAVE_SYSTEM || PLATFORM_PS5)
+
+#if USE_UE_SAVE_SYSTEM
 #include "PlatformFeatures.h"
 #include "SaveGameSystem.h"
 #endif
 
 DEFINE_LOG_CATEGORY(LogSpudSubsystem)
-
 
 static bool bEnableSPUD = true;
 static FAutoConsoleVariableRef CVarEnableSPUD(TEXT("SPUD.Enable"), bEnableSPUD, TEXT("Can be used to debug disable state of plugin by setting to false"), ECVF_Cheat);
@@ -446,7 +447,7 @@ void USpudSubsystem::FinishSaveGame(const FString& SlotName, const FText& Title,
 
 	bool SaveOK = false;
 
-#if PLATFORM_PS5
+#if USE_UE_SAVE_SYSTEM
 	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
 	{
 		// We need to convert the data to a TArray<uint8> first
@@ -589,7 +590,7 @@ void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOpti
 
 	// TODO: async load
 
-#if PLATFORM_PS5
+#if USE_UE_SAVE_SYSTEM
 	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
 	{
 		TArray<uint8> Data;
@@ -607,7 +608,6 @@ void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOpti
 				LoadComplete(SlotName, false);
 				return;
 			}
-			UE_LOG(LogSpudSubsystem, Error, TEXT("LoadGame: Load Game Returned false, check for inner errors"));
 		}
 		else
 		{
@@ -685,7 +685,7 @@ bool USpudSubsystem::DeleteSave(const FString& SlotName)
 	if (!ServerCheck(true))
 		return false;
 	
-#if PLATFORM_PS5
+#if USE_UE_SAVE_SYSTEM
 	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
 		return SaveSystem->DeleteGame(false, *SlotName, 0);
 	else
@@ -916,7 +916,7 @@ TArray<USpudSaveGameInfo*> USpudSubsystem::GetSaveGameList(bool bIncludeQuickSav
 	for (auto&& File : SaveFiles)
 	{
 #if PLATFORM_PS5
-		FString SlotName = File; // Because it doesn't have an extension
+		FString SlotName = File; // Because consoles doesn't have an extension
 #else
 		FString SlotName = FPaths::GetBaseFilename(File);
 #endif
@@ -941,7 +941,7 @@ TArray<USpudSaveGameInfo*> USpudSubsystem::GetSaveGameList(bool bIncludeQuickSav
 
 USpudSaveGameInfo* USpudSubsystem::GetSaveGameInfo(const FString& SlotName)
 {
-#if PLATFORM_PS5
+#if USE_UE_SAVE_SYSTEM
 	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
 	{
 		TArray<uint8> Data;
@@ -950,10 +950,10 @@ USpudSaveGameInfo* USpudSubsystem::GetSaveGameInfo(const FString& SlotName)
 		if (SaveSystem->LoadGame(false, *SlotName, 0, Data))
 		{
 			auto Info = NewObject<USpudSaveGameInfo>();
-			USpudState::LoadSaveInfoFromArchive(MemoryReader, *Info);
+			const bool bResult = USpudState::LoadSaveInfoFromArchive(MemoryReader, *Info);
 			Info->SlotName = SlotName;
 
-			return Info;
+			return bResult ? Info : nullptr;
 		}
 
 		//Load Failed
@@ -1021,7 +1021,7 @@ FString USpudSubsystem::GetSaveGameFilePath(const FString& SlotName)
 
 void USpudSubsystem::ListSaveGameFiles(TArray<FString>& OutSaveFileList)
 {
-#if PLATFORM_PS5
+#if USE_UE_SAVE_SYSTEM
 	if (ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem())
 	{
 		SaveSystem->GetSaveGameNames(OutSaveFileList,0);

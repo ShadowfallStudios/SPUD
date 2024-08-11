@@ -41,5 +41,8 @@ public class SPUD : ModuleRules
 			{
 			}
 			);
+	
+		// Prefer UE save system to keep multi-platform compatibility between files
+		PublicDefinitions.Add("PREFER_UE_SAVE_SYSTEM=1");
 	}
 }

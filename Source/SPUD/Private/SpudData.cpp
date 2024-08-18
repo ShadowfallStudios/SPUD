@@ -1183,7 +1183,8 @@ bool FSpudSaveData::ReadSaveInfoFromArchive(FSpudChunkedDataArchive& Ar, FSpudSa
 
 	if (Hdr.Magic != FSpudChunkHeader::EncodeMagic(SPUDDATA_SAVEGAME_MAGIC))
 	{
-		UE_LOG(LogSpudData, Error, TEXT("Cannot get info for save game, file is not a save game"))
+		// This is actually not an error, there might be other external saved files in folder
+		UE_LOG(LogSpudData, VeryVerbose, TEXT("Cannot get info for save game, file is not a save game"))
 		return false;
 	}
 

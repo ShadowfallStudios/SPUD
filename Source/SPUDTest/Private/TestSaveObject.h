@@ -83,7 +83,7 @@ public:
 	FText TextVal;
 
 	UPROPERTY(SaveGame)
-	UTestNestedUObject* UObjectVal = nullptr;
+	TObjectPtr<UTestNestedUObject> UObjectVal = nullptr;
 
 	UPROPERTY(SaveGame)
 	TObjectPtr<UTestNestedUObject> TObjectPtrVal = nullptr;
@@ -99,7 +99,7 @@ public:
 	// sadly we can't test actor refs easily here; test example world does that though
 
 	UPROPERTY(SaveGame)
-	TMap<int, UTestNestedUObject*> UObjectMap;
+	TMap<int, TObjectPtr<UTestNestedUObject>> UObjectMap;
 
 	// Arrays of the above
 	UPROPERTY(SaveGame)
@@ -206,7 +206,7 @@ public:
 	FText TextVal;
 
 	UPROPERTY(SaveGame)
-	UTestNestedUObject* UObjectVal;
+	TObjectPtr<UTestNestedUObject> UObjectVal;
 
 	UPROPERTY(SaveGame)
 	TObjectPtr<UTestNestedUObject> TObjectPtrVal = nullptr;
@@ -221,7 +221,7 @@ public:
 	TArray< TSubclassOf<AActor> > ActorSubclassArray;
 
 	UPROPERTY(SaveGame)
-	TMap<int, UObject*> UObjectMap;
+	TMap<int, TObjectPtr<UObject>> UObjectMap;
 	
 	// sadly we can't test actor refs easily here; test example world does that though
 
@@ -281,7 +281,7 @@ public:
 };
 
 UCLASS()
-class SPUDTEST_API UTestSaveObjectCustomData : public UObject, public ISpudObjectCallback
+class SPUDTEST_API UTestSaveObjectCustomData : public UObject, public ISpudObject
 {
 	GENERATED_BODY()
 public:
@@ -303,9 +303,10 @@ public:
 	
 	static const FString TestChunkID1;
 	static const FString TestChunkID2;
-	
-	virtual void SpudStoreCustomData_Implementation(const USpudState* State, USpudStateCustomData* CustomData) override;
-	virtual void SpudRestoreCustomData_Implementation(USpudState* State, USpudStateCustomData* CustomData) override;
+
+	virtual bool HasCustomData_Implementation() const override { return true; }
+	virtual void SpudStoreCustomData_Implementation(const USpudState* State, class USpudStateCustomData* CustomData) override;
+	virtual void SpudRestoreCustomData_Implementation(USpudState* State, class USpudStateCustomData* CustomData) override;
 };
 
 
@@ -361,19 +362,19 @@ class SPUDTEST_API UTestSaveObjectParent : public UObject
 	GENERATED_BODY()
 public:
 	UPROPERTY(SaveGame)
-	UTestNestedChild1* UObjectVal1;
+	TObjectPtr<UTestNestedChild1> UObjectVal1;
 
 	UPROPERTY(SaveGame)
-	UTestNestedChild2* UObjectVal2;
+	TObjectPtr<UTestNestedChild2> UObjectVal2;
 
 	UPROPERTY(SaveGame)
-	UTestNestedChild3* UObjectVal3;
+	TObjectPtr<UTestNestedChild3> UObjectVal3;
 
 	UPROPERTY(SaveGame)
-	UTestNestedChild4* UObjectVal4;
+	TObjectPtr<UTestNestedChild4> UObjectVal4;
 
 	UPROPERTY(SaveGame)
-	UTestNestedChild5* UObjectVal5;
+	TObjectPtr<UTestNestedChild5> UObjectVal5;
 };
 
 USTRUCT(BlueprintType)

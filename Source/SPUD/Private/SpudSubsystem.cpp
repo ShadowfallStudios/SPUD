@@ -161,11 +161,11 @@ void USpudSubsystem::NotifyLevelUnloadedExternally(ULevel* Level)
 	HandleLevelUnloaded(Level);
 }
 
-void USpudSubsystem::LoadLatestSaveGame(const FString& TravelOptions)
+void USpudSubsystem::LoadLatestSaveGame(const FString& TravelOptions, bool bAutoTravelLevel)
 {
 	auto Latest = GetLatestSaveGame();
 	if (Latest)
-		LoadGame(Latest->SlotName, TravelOptions);
+		LoadGame(Latest->SlotName, TravelOptions, bAutoTravelLevel);
 }
 
 void USpudSubsystem::OnPreLoadMap(const FString& MapName)
@@ -355,14 +355,10 @@ void USpudSubsystem::SaveGame(const FString& SlotName, const FText& Title, bool 
 		SlotNameInProgress = SlotName;
 		TitleInProgress = Title;
 		ExtraInfoInProgress = ExtraInfo;
-		UGameViewportClient* ViewportClient = UGameplayStatics::GetPlayerController(GetWorld(), 0)->GetLocalPlayer()->ViewportClient;
+		UGameViewportClient* ViewportClient = GetGameInstance()->GetGameViewportClient();
+		check(ViewportClient);
 		OnScreenshotHandle = ViewportClient->OnScreenshotCaptured().AddUObject(this, &USpudSubsystem::OnScreenshotCaptured);
 		FScreenshotRequest::RequestScreenshot(false);
-		// OnScreenShotCaptured will finish
-		// EXCEPT that if a Widget BP is open in the editor, this request will disappear into nowhere!! (4.26.1)
-		// So we need a failsafe
-		// Wait for 1 second. Can't use FTimerManager because there's no option for those to tick while game paused (which is common in saves!)
-		ScreenshotTimeout = 1;
 	}
 	else
 	{
@@ -370,25 +366,8 @@ void USpudSubsystem::SaveGame(const FString& SlotName, const FText& Title, bool 
 	}
 }
 
-
-void USpudSubsystem::ScreenshotTimedOut()
-{
-	// We failed to get a screenshot back in time
-	// This is mostly likely down to a weird fecking issue in PIE where if ANY Widget Blueprint is open while a screenshot
-	// is requested, that request is never fulfilled
-
-	UE_LOG(LogSpudSubsystem, Error, TEXT("Request for save screenshot timed out. This is most likely a UE4 bug: "
-		"Widget Blueprints being open in the editor during PIE seems to break screenshots. Completing save game without a screenshot."))
-
-	ScreenshotTimeout = 0;
-	FinishSaveGame(SlotNameInProgress, TitleInProgress, ExtraInfoInProgress, nullptr);
-	
-}
-
 void USpudSubsystem::OnScreenshotCaptured(int32 Width, int32 Height, const TArray<FColor>& Colours)
 {
-	ScreenshotTimeout = 0;
-
 	UGameViewportClient* ViewportClient = UGameplayStatics::GetPlayerController(GetWorld(), 0)->GetLocalPlayer()->ViewportClient;
 	ViewportClient->OnScreenshotCaptured().Remove(OnScreenshotHandle);
 	OnScreenshotHandle.Reset();
@@ -1171,41 +1150,3 @@ USpudCustomSaveInfo* USpudSubsystem::CreateCustomSaveInfo()
 {
 	return NewObject<USpudCustomSaveInfo>();
 }
-
-
-
-// FTickableGameObject begin
-
-
-void USpudSubsystem::Tick(float DeltaTime)
-{
-	if (ScreenshotTimeout > 0)
-	{
-		ScreenshotTimeout -= DeltaTime;
-		if (ScreenshotTimeout <= 0)
-		{
-			ScreenshotTimeout = 0;
-			ScreenshotTimedOut();
-		}
-	}
-}
-
-ETickableTickType USpudSubsystem::GetTickableTickType() const
-{
-	// This is for timeout purposes
-	return ETickableTickType::Always;
-}
-
-bool USpudSubsystem::IsTickableWhenPaused() const
-{
-	// We need the screenshot failsafe timeout even when paused
-	return true;
-}
-
-TStatId USpudSubsystem::GetStatId() const
-{
-	RETURN_QUICK_DECLARE_CYCLE_STAT(USpudSubsystem, STATGROUP_Tickables);
-}
-
-
-// FTickableGameObject end

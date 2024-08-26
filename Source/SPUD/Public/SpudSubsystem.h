@@ -5,7 +5,6 @@
 #include "SpudCustomSaveInfo.h"
 #include "SpudState.h"
 #include "Subsystems/GameInstanceSubsystem.h"
-#include "Tickable.h"
 #include "Engine/World.h"
 
 #include "SpudSubsystem.generated.h"
@@ -63,7 +62,7 @@ enum class ESpudSaveSorting : uint8
 
 /// Subsystem which controls our save games, and also the active game's persistent state (for streaming levels)
 UCLASS(Config=Engine)
-class SPUD_API USpudSubsystem : public UGameInstanceSubsystem, public FTickableGameObject
+class SPUD_API USpudSubsystem : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 
@@ -118,11 +117,10 @@ public:
 	FString AutoSaveSlotName = FString("__AutoSave__");
 
 protected:
-	float ScreenshotTimeout = 0;	
 	FString SlotNameInProgress;
 	FText TitleInProgress;
 	UPROPERTY()
-	const USpudCustomSaveInfo* ExtraInfoInProgress;
+	TObjectPtr<const USpudCustomSaveInfo> ExtraInfoInProgress;
 
 	UPROPERTY()
 	TArray<TWeakObjectPtr<UObject>> GlobalObjects;
@@ -145,7 +143,7 @@ protected:
 
 	// The currently active game state
 	UPROPERTY()
-	USpudState* ActiveState;
+	TObjectPtr<USpudState> ActiveState;
 
 	USpudState* GetActiveState()
 	{
@@ -184,8 +182,6 @@ protected:
 	void StoreWorld(UWorld* World, bool bReleaseLevels, bool bBlocking);
 	void StoreLevel(ULevel* Level, bool bRelease, bool bBlocking);
 
-	UFUNCTION()
-	void ScreenshotTimedOut();
 	UFUNCTION()
     void OnScreenshotCaptured(int32 Width, int32 Height, const TArray<FColor>& Colours);
 
@@ -271,7 +267,7 @@ public:
 	 * @param TravelOptions Options string to include in the travel URL e.g. "Listen"
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-    void LoadLatestSaveGame(const FString& TravelOptions = FString(TEXT("")));
+    void LoadLatestSaveGame(const FString& TravelOptions = FString(TEXT("")), bool bAutoTravelLevel = true);
 
 	/// Create a save game descriptor which you can use to store additional descriptive information about a save game.
 	/// Fill the returned object in then pass it to the SaveGame call to have additional info to display on save/load screens
@@ -461,15 +457,6 @@ public:
 	static void ListSaveGameFiles(TArray<FString>& OutSaveFileList);
 	static FString GetActiveGameFolder();
 	static FString GetActiveGameFilePath(const FString& Name);
-
-
-	// FTickableGameObject begin
-	virtual void Tick(float DeltaTime) override;
-	virtual ETickableTickType GetTickableTickType() const override;
-	virtual bool IsTickableWhenPaused() const override;
-	virtual TStatId GetStatId() const override;
-	// FTickableGameObject end
-	
 };
 
 inline USpudSubsystem* GetSpudSubsystem(UWorld* WorldContext)

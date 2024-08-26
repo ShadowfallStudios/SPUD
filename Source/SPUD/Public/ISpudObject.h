@@ -1,9 +1,9 @@
 #pragma once
 
-#include "CoreMinimal.h"
-#include "SpudState.h"
-
+#include "UObject/Interface.h"
 #include "ISpudObject.generated.h"
+
+class USpudState;
 
 UINTERFACE(MinimalAPI)
 class USpudObject : public UInterface
@@ -63,6 +63,10 @@ public:
 	/// Allows deciding if an object should be skipped at runtime.
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD Interface")
 	bool ShouldSkip() const; virtual bool ShouldSkip_Implementation() const { return false; }
+
+	// Allows skipping loading actors during level restore. Use this if you need to restore an actor individually after actual load process.
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD Interface")
+	bool ShouldSkipDuringLevelRestore() const; virtual bool ShouldSkipDuringLevelRestore_Implementation() const { return false; }
 };
 
 UINTERFACE(MinimalAPI)

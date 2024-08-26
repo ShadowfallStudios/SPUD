@@ -1,5 +1,4 @@
 #include "SpudSubsystem.h"
-#include "EngineUtils.h"
 #include "SpudState.h"
 #include "Engine/LevelStreaming.h"
 #include "Engine/LocalPlayer.h"
@@ -8,6 +7,7 @@
 #include "TimerManager.h"
 #include "HAL/FileManager.h"
 #include "Async/Async.h"
+#include "Streaming/LevelStreamingDelegates.h"
 
 DEFINE_LOG_CATEGORY(LogSpudSubsystem)
 
@@ -15,16 +15,21 @@ DEFINE_LOG_CATEGORY(LogSpudSubsystem)
 #define SPUD_QUICKSAVE_SLOTNAME "__QuickSave__"
 #define SPUD_AUTOSAVE_SLOTNAME "__AutoSave__"
 
+static bool bEnableSPUD = true;
+static FAutoConsoleVariableRef CVarEnableSPUD(TEXT("SPUD.Enable"), bEnableSPUD, TEXT("Can be used to debug disable state of plugin by setting to false"), ECVF_Cheat);
 
 void USpudSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	bIsTearingDown = false;
 	// Note: this will register for clients too, but callbacks will be ignored
 	// We can't call ServerCheck() here because GameMode won't be valid (which is what we use to determine server mode)
-	OnPostLoadMapHandle = FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(this, &USpudSubsystem::OnPostLoadMap);
-	OnPreLoadMapHandle = FCoreUObjectDelegates::PreLoadMap.AddUObject(this, &USpudSubsystem::OnPreLoadMap);
-	
-	OnSeamlessTravelHandle = FWorldDelegates::OnSeamlessTravelTransition.AddUObject(this, &USpudSubsystem::OnSeamlessTravelTransition);
+	FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(this, &USpudSubsystem::OnPostLoadMap);
+	FCoreUObjectDelegates::PreLoadMap.AddUObject(this, &USpudSubsystem::OnPreLoadMap);
+
+	FLevelStreamingDelegates::OnLevelBeginMakingVisible.AddUObject(this, &USpudSubsystem::OnLevelBeginMakingVisible);
+	FLevelStreamingDelegates::OnLevelBeginMakingInvisible.AddUObject(this, &USpudSubsystem::OnLevelBeginMakingInvisible);
+
+	FWorldDelegates::OnSeamlessTravelStart.AddUObject(this, &USpudSubsystem::OnSeamlessTravelStart);
 	
 #if WITH_EDITORONLY_DATA
 	// The one problem we have is that in PIE mode, PostLoadMap doesn't get fired for the current map you're on
@@ -35,16 +40,12 @@ void USpudSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	auto World = GetWorld();
 	if (World && World->WorldType == EWorldType::PIE)
 	{
-		FTimerHandle TempHandle;
-		GetWorld()->GetTimerManager().SetTimer(TempHandle,[this]()
+		GetWorld()->GetTimerManager().SetTimerForNextTick([this]()
 		{
 			// TODO: make this more configurable, use a known save etc
-			NewGame(false);
-
-		}, 0.2, false);
+			NewGame(true);
+		});
 	}
-
-	
 #endif
 }
 
@@ -53,22 +54,11 @@ void USpudSubsystem::Deinitialize()
 	Super::Deinitialize();
 	bIsTearingDown = true;
 	
-	FCoreUObjectDelegates::PostLoadMapWithWorld.Remove(OnPostLoadMapHandle);
-	FCoreUObjectDelegates::PreLoadMap.Remove(OnPreLoadMapHandle);
-	FWorldDelegates::OnSeamlessTravelTransition.Remove(OnSeamlessTravelHandle);
-
-	// Clean up streaming level event listeners, as they may fire after we've been destroyed
-	for (auto It = MonitoredStreamingLevels.CreateIterator(); It; ++It)
-	{
-		ULevelStreaming* const Level = It.Key();
-		if (ensure(Level))
-		{
-			USpudStreamingLevelWrapper* const Wrapper = It.Value();
-			Level->OnLevelShown.RemoveAll(Wrapper);
-			Level->OnLevelHidden.RemoveAll(Wrapper);
-			It.RemoveCurrent();
-		}
-	}
+	FCoreUObjectDelegates::PostLoadMapWithWorld.RemoveAll(this);
+	FCoreUObjectDelegates::PreLoadMap.RemoveAll(this);
+	FLevelStreamingDelegates::OnLevelBeginMakingVisible.RemoveAll(this);
+	FLevelStreamingDelegates::OnLevelBeginMakingInvisible.RemoveAll(this);
+	FWorldDelegates::OnSeamlessTravelStart.RemoveAll(this);
 }
 
 
@@ -95,6 +85,11 @@ void USpudSubsystem::NewGame(bool bCheckServerOnly, bool bAfterLevelLoad)
 
 bool USpudSubsystem::ServerCheck(bool LogWarning) const
 {
+	if (!bEnableSPUD)
+	{
+		return false;
+	}
+
 	// Note: must only call this when game mode is present! Don't call when unloading
 	// On missing world etc we just assume true for safety
 	auto GI = GetGameInstance();
@@ -118,7 +113,7 @@ void USpudSubsystem::EndGame()
 
 	UnsubscribeAllLevelObjectEvents();
 	CurrentState = ESpudSystemState::Disabled;
-	IsRestoringState = false;
+	bIsRestoringState = false;
 }
 
 void USpudSubsystem::AutoSaveGame(FText Title, bool bTakeScreenshot, const USpudCustomSaveInfo* ExtraInfo)
@@ -173,15 +168,11 @@ void USpudSubsystem::LoadLatestSaveGame(const FString& TravelOptions)
 void USpudSubsystem::OnPreLoadMap(const FString& MapName)
 {
 	if (!ServerCheck(false))
+	{
 		return;
+	}
 
 	PreTravelToNewMap.Broadcast(MapName);
-	// All streaming maps will be unloaded by travelling, so remove all
-	LevelRequests.Empty();
-	StopUnloadTimer();
-	MonitoredStreamingLevels.Empty();
-	
-	FirstStreamRequestSinceMapLoad = true;
 
 	// When we transition out of a map while enabled, save contents
 	if (CurrentState == ESpudSystemState::RunningIdle)
@@ -191,20 +182,35 @@ void USpudSubsystem::OnPreLoadMap(const FString& MapName)
 		const auto World = GetWorld();
 		if (IsValid(World))
 		{
-			UE_LOG(LogSpudSubsystem, Verbose, TEXT("OnPreLoadMap saving: %s"), *UGameplayStatics::GetCurrentLevelName(World));
-			// Map and all streaming level data will be released.
-			// Block while doing it so they all get written predictably
-			StoreWorld(World, true, true);
+			if (bSaveLevelStateWhileTraveling)
+			{
+				UE_LOG(LogSpudSubsystem, Verbose, TEXT("OnPreLoadMap saving: %s"), *UGameplayStatics::GetCurrentLevelName(World));
+				// Map and all streaming level data will be released.
+				// Block while doing it so they all get written predictably
+				StoreWorld(World, true, true);
+			}
+			else
+			{
+				UE_LOG(LogSpudSubsystem, Verbose, TEXT("OnPreLoadMap releasing data: %s"), *UGameplayStatics::GetCurrentLevelName(World));
+				for (auto && Level : World->GetLevels())
+				{
+					GetActiveState()->ReleaseLevelData(USpudState::GetLevelName(Level), true);
+				}	
+			}
 		}
 	}
 }
 
-void USpudSubsystem::OnSeamlessTravelTransition(UWorld* World)
+void USpudSubsystem::OnSeamlessTravelStart(UWorld* World, const FString& MapName)
 {
+	if (!ServerCheck(false))
+	{
+		return;
+	}
+
 	if (IsValid(World))
 	{
-		FString MapName = UGameplayStatics::GetCurrentLevelName(World);
-		UE_LOG(LogSpudSubsystem, Verbose, TEXT("OnSeamlessTravelTransition: %s"), *MapName);
+		UE_LOG(LogSpudSubsystem, Verbose, TEXT("OnSeamlessTravelStart: %s"), *MapName);
 		// Just before seamless travel, do the same thing as pre load map on OpenLevel
 		OnPreLoadMap(MapName);
 	}
@@ -213,8 +219,9 @@ void USpudSubsystem::OnSeamlessTravelTransition(UWorld* World)
 void USpudSubsystem::OnPostLoadMap(UWorld* World)
 {
 	if (!ServerCheck(false))
+	{
 		return;
-
+	}
 
 	switch(CurrentState)
 	{
@@ -232,6 +239,9 @@ void USpudSubsystem::OnPostLoadMap(UWorld* World)
 		}
 		break;
 	case ESpudSystemState::RunningIdle:
+		// We need to subscribe to ALL currently loaded levels, because of "AlwaysLoaded" sublevels
+		SubscribeAllLevelObjectEvents();
+		break;
 	case ESpudSystemState::LoadingGame:
 		// This is called when a new map is loaded
 		// In all cases, we try to load the state
@@ -243,32 +253,69 @@ void USpudSubsystem::OnPostLoadMap(UWorld* World)
 			       TEXT("OnPostLoadMap restore: %s"),
 			       *LevelName);
 
-			IsRestoringState = true;
+			bIsRestoringState = true;
 
 			const auto State = GetActiveState();
 			PreLevelRestore.Broadcast(LevelName);
 			State->RestoreLoadedWorld(World);
 			PostLevelRestore.Broadcast(LevelName, true);
-			
-			IsRestoringState = false;
+
+			bIsRestoringState = false;
 			// We need to subscribe to ALL currently loaded levels, because of "AlwaysLoaded" sublevels
 			SubscribeAllLevelObjectEvents();
-		}
 
-		// If we were loading, this is the completion
-		if (CurrentState == ESpudSystemState::LoadingGame)
-		{
 			LoadComplete(SlotNameInProgress, true);
 			UE_LOG(LogSpudSubsystem, Log, TEXT("Load: Success"));
 		}
-
 		break;
 	default:
 		break;
-			
 	}
 
 	PostTravelToNewMap.Broadcast();
+}
+
+void USpudSubsystem::LoadActorData(AActor* Actor, bool bAsGameLoad)
+{
+	if (!ServerCheck(false))
+	{
+		return;
+	}
+
+	const ESpudSystemState PrevState = CurrentState;
+
+	if (bAsGameLoad)
+	{
+		CurrentState = ESpudSystemState::LoadingGame;
+	}
+
+	UE_LOG(LogSpudSubsystem,
+		   Verbose,
+		   TEXT("LoadActorData restore: %s"),
+		   *GetNameSafe(Actor));
+
+	bIsRestoringState = true;
+	const auto State = GetActiveState();
+	State->RestoreActor(Actor);
+	bIsRestoringState = false;
+
+	CurrentState = PrevState;
+}
+
+void USpudSubsystem::MarkActorDestroyed(AActor* Actor)
+{
+	if (!ServerCheck(false))
+	{
+		return;
+	}
+	OnActorDestroyed(Actor);
+}
+
+bool USpudSubsystem::IsStreamedLevelRestoring(ULevel* Level) const
+{
+	const FString LevelName = USpudState::GetLevelName(Level);
+	const bool* FoundState = LevelStreamingRestoreStates.Find(FName(LevelName));
+	return FoundState && *FoundState;
 }
 
 void USpudSubsystem::SaveGame(const FString& SlotName, const FText& Title, bool bTakeScreenshot, const USpudCustomSaveInfo* ExtraInfo)
@@ -444,15 +491,9 @@ void USpudSubsystem::HandleLevelLoaded(FName LevelName)
 
 	AsyncTask(ENamedThreads::GameThread, [this, LevelName]()
 	{
-		// But also add a slight delay so we get a tick in between so physics works
-		FTimerHandle H;
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().SetTimer(H, [this, LevelName]()
-			{
-				PostLoadStreamLevelGameThread(LevelName);
-			}, 0.01, false);
-		}
+		PostLoadStreamLevelGameThread(LevelName);
+		LevelStreamingRestoreStates.Add(LevelName, false);
+		PostLoadStreamingLevel.Broadcast(LevelName);
 	});
 }
 
@@ -508,7 +549,7 @@ void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOpti
 	}
 
 	CurrentState = ESpudSystemState::LoadingGame;
-	IsRestoringState = true;
+	bIsRestoringState = true;
 	PreLoadGame.Broadcast(SlotName);
 
 	UE_LOG(LogSpudSubsystem, Verbose, TEXT("Loading Game from slot %s"), *SlotName);		
@@ -566,7 +607,7 @@ void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOpti
 void USpudSubsystem::LoadComplete(const FString& SlotName, bool bSuccess)
 {
 	CurrentState = ESpudSystemState::RunningIdle;
-	IsRestoringState = false;
+	bIsRestoringState = false;
 	SlotNameInProgress = "";
 	PostLoadGame.Broadcast(SlotName, bSuccess);
 }
@@ -607,153 +648,6 @@ void USpudSubsystem::ClearLevelState(const FString& LevelName)
 	
 }
 
-void USpudSubsystem::AddRequestForStreamingLevel(UObject* Requester, FName LevelName, bool BlockingLoad)
-{
-	if (!ServerCheck(false))
-		return;
-
-	auto && Request = LevelRequests.FindOrAdd(LevelName);
-	const int PrevRequesters = Request.Requesters.Num();
-	Request.Requesters.AddUnique(Requester);
-	if (Request.bPendingUnload)
-	{
-		Request.bPendingUnload = false; // no load required, just flip the unload flag
-		Request.LastRequestExpiredTime = 0;
-	}
-	else if (PrevRequesters == 0)
-	{
-		// Load on the first request only		
-		LoadStreamLevel(LevelName, BlockingLoad);		
-	}
-}
-
-void USpudSubsystem::WithdrawRequestForStreamingLevel(UObject* Requester, FName LevelName)
-{
-	if (!ServerCheck(false))
-		return;
-
-	if (auto Request = LevelRequests.Find(LevelName))
-	{
-		const int Removed = Request->Requesters.Remove(Requester);
-		if (Removed > 0 && Request->Requesters.Num() == 0)
-		{
-			// This level can be unloaded after time delay
-			Request->bPendingUnload = true;
-			Request->LastRequestExpiredTime = UGameplayStatics::GetTimeSeconds(GetWorld());
-			StartUnloadTimer();
-		}
-	}
-}
-
-void USpudSubsystem::StartUnloadTimer()
-{
-	if (!StreamLevelUnloadTimerHandle.IsValid())
-	{
-		// Set up a timer which repeatedly checks for actual unload
-		// This doesn't need to be every tick, just every 0.5s
-		GetWorld()->GetTimerManager().SetTimer(StreamLevelUnloadTimerHandle, this, &USpudSubsystem::CheckStreamUnload, 0.5, true);
-	}	
-}
-
-
-void USpudSubsystem::StopUnloadTimer()
-{
-	if (StreamLevelUnloadTimerHandle.IsValid())
-	{
-		GetWorld()->GetTimerManager().ClearTimer(StreamLevelUnloadTimerHandle);
-	}	
-}
-
-void USpudSubsystem::CheckStreamUnload()
-{
-	const float UnloadBeforeTime = UGameplayStatics::GetTimeSeconds(GetWorld()) - StreamLevelUnloadDelay;
-	bool bAnyStillWaiting = false;
-	for (auto && Pair : LevelRequests)
-	{
-		const FName& LevelName = Pair.Key;
-		FStreamLevelRequests& Request = Pair.Value;
-		if (Request.bPendingUnload)
-		{
-			if (Request.Requesters.Num() == 0 &&
-				Request.LastRequestExpiredTime <= UnloadBeforeTime)
-			{
-				Request.bPendingUnload = false;
-				UnloadStreamLevel(LevelName);
-			}
-			else
-				bAnyStillWaiting = true;
-		}
-	}
-
-	// Only run the timer while we have something to do
-	if (!bAnyStillWaiting)
-		StopUnloadTimer();
-}
-
-
-
-
-void USpudSubsystem::LoadStreamLevel(FName LevelName, bool Blocking)
-{
-	FScopeLock PendingLoadLock(&LevelsPendingLoadMutex);
-	PreLoadStreamingLevel.Broadcast(LevelName);
-	
-	FLatentActionInfo Latent;
-	Latent.ExecutionFunction = "PostLoadStreamLevel";
-	Latent.CallbackTarget = this;
-	int32 RequestID = LoadUnloadRequests++; // overflow is OK
-	Latent.UUID = RequestID; // this eliminates duplicate calls so should be unique
-	Latent.Linkage = RequestID;
-	LevelsPendingLoad.Add(RequestID, LevelName);
-
-	// Upgrade to a blocking call if this is the first streaming level since map change (ensure appears in time)
-	if (FirstStreamRequestSinceMapLoad)
-	{
-		Blocking = true;
-		FirstStreamRequestSinceMapLoad = false;
-	}
-
-	// We don't make the level visible until the post-load callback
-	UGameplayStatics::LoadStreamLevel(GetWorld(), LevelName, false, Blocking, Latent);
-}
-
-void USpudSubsystem::PostLoadStreamLevel(int32 LinkID)
-{
-	FScopeLock PendingLoadLock(&LevelsPendingLoadMutex);
-	
-	// We should be able to obtain the level name
-	if (LevelsPendingLoad.Contains(LinkID))
-	{
-		FName LevelName = LevelsPendingLoad.FindAndRemoveChecked(LinkID);
-
-		// This might look odd but for physics restoration to work properly we need a very specific
-		// set of circumstances:
-		// 1. Level must be made visible first
-		// 2. We need to wait for all the objects to be ticked at least once
-		// 3. Then we restore
-		//
-		// Failure to do this means SetPhysicsLinearVelocity etc just does *nothing* silently
-
-		// Make visible
-		auto StreamLevel = UGameplayStatics::GetStreamingLevel(GetWorld(), LevelName);
-		if (StreamLevel)
-		{
-			StreamLevel->SetShouldBeVisible(true);
-		}		
-
-		if (!bSupportWorldPartition)
-		{
-			// When supporting WP, shown event will trigger this
-			HandleLevelLoaded(LevelName);
-		}
-	}
-	else
-	{
-		UE_LOG(LogSpudSubsystem, Error, TEXT("PostLoadStreamLevel called but not for a level we loaded??"));
-	}
-}
-
-
 void USpudSubsystem::PostLoadStreamLevelGameThread(FName LevelName)
 {
 	PostLoadStreamingLevel.Broadcast(LevelName);
@@ -768,7 +662,7 @@ void USpudSubsystem::PostLoadStreamLevelGameThread(FName LevelName)
 			return;
 		}
 
-		IsRestoringState = true;
+		bIsRestoringState = true;
 
 		PreLevelRestore.Broadcast(LevelName.ToString());
 		// It's important to note that this streaming level won't be added to UWorld::Levels yet
@@ -785,48 +679,14 @@ void USpudSubsystem::PostLoadStreamLevelGameThread(FName LevelName)
 		SubscribeLevelObjectEvents(Level);
 		PostLevelRestore.Broadcast(LevelName.ToString(), true);
 
-		IsRestoringState = false;
+		bIsRestoringState = false;
 	}
-}
-
-void USpudSubsystem::UnloadStreamLevel(FName LevelName)
-{
-	auto StreamLevel = UGameplayStatics::GetStreamingLevel(GetWorld(), LevelName);
-
-	if (StreamLevel)
-	{
-		ULevel* Level = StreamLevel->GetLoadedLevel();
-		if (!Level)
-		{
-			// Already unloaded
-			return;
-		}
-		PreUnloadStreamingLevel.Broadcast(LevelName);
-
-		if (!bSupportWorldPartition)
-		{
-			// If using WP, the hidden event will trigger this instead
-			HandleLevelUnloaded(Level);
-		}
-		
-		// Now unload
-		FScopeLock PendingUnloadLock(&LevelsPendingUnloadMutex);
-
-		FLatentActionInfo Latent;
-		Latent.ExecutionFunction = "PostUnloadStreamLevel";
-		Latent.CallbackTarget = this;
-		int32 RequestID = LoadUnloadRequests++; // overflow is OK
-		Latent.UUID = RequestID; // this eliminates duplicate calls so should be unique
-		Latent.Linkage = RequestID;
-		LevelsPendingUnload.Add(RequestID, LevelName);
-		UGameplayStatics::UnloadStreamLevel(GetWorld(), LevelName, Latent, false);
-	}	
 }
 
 void USpudSubsystem::ForceReset()
 {
 	CurrentState = ESpudSystemState::RunningIdle;
-	IsRestoringState = false;
+	bIsRestoringState = false;
 }
 
 void USpudSubsystem::SetUserDataModelVersion(int32 Version)
@@ -838,19 +698,6 @@ void USpudSubsystem::SetUserDataModelVersion(int32 Version)
 int32 USpudSubsystem::GetUserDataModelVersion() const
 {
 	return GCurrentUserDataModelVersion;
-}
-
-void USpudSubsystem::PostUnloadStreamLevel(int32 LinkID)
-{
-	FScopeLock PendingUnloadLock(&LevelsPendingUnloadMutex);
-	
-	const FName LevelName = LevelsPendingUnload.FindAndRemoveChecked(LinkID);
-
-	// Pass back to the game thread, streaming calls happen in loading thread?
-	AsyncTask(ENamedThreads::GameThread, [this, LevelName]()
-    {
-        PostUnloadStreamLevelGameThread(LevelName);				
-    });
 }
 
 
@@ -883,6 +730,35 @@ void USpudSubsystem::UnsubscribeAllLevelObjectEvents()
 	}
 }
 
+void USpudSubsystem::OnLevelBeginMakingInvisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel)
+{
+	if (!ServerCheck(true) || World->IsNetMode(NM_Client))
+	{
+		return;
+	}
+
+	const FString LevelName = USpudState::GetLevelName(LoadedLevel);
+	UE_LOG(LogSpudSubsystem, Verbose, TEXT("Level hidden: %s"), *LevelName);
+	PreUnloadStreamingLevel.Broadcast(FName(LevelName));
+	HandleLevelUnloaded(LoadedLevel);
+	PostUnloadStreamingLevel.Broadcast(FName(LevelName));
+}
+
+void USpudSubsystem::OnLevelBeginMakingVisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel)
+{
+	if (!ServerCheck(true) || World->IsNetMode(NM_Client))
+	{
+		return;
+	}
+
+	const FString LevelNameStr = USpudState::GetLevelName(LoadedLevel);
+	UE_LOG(LogSpudSubsystem, Verbose, TEXT("Level shown: %s"), *LevelNameStr);
+
+	const FName LevelName = FName(LevelNameStr);
+	LevelStreamingRestoreStates.Add(LevelName, true);
+	PreLoadStreamingLevel.Broadcast(LevelName);
+	HandleLevelLoaded(LevelName);
+}
 
 void USpudSubsystem::SubscribeLevelObjectEvents(ULevel* Level)
 {
@@ -1200,44 +1076,6 @@ void USpudSubsystem::Tick(float DeltaTime)
 			ScreenshotTimedOut();
 		}
 	}
-
-	if (bSupportWorldPartition)
-	{
-		auto world = GetWorld();
-		if (world)
-		{
-			TSet<ULevelStreaming*> streamingLevels(world->GetStreamingLevels());
-
-			// Find newly added levels.
-			for (const auto level : streamingLevels)
-			{
-				if (!MonitoredStreamingLevels.Contains(level))
-				{
-					UE_LOG(LogSpudSubsystem, Verbose, TEXT("Loaded streaming level: %s"), *GetNameSafe(level));
-					auto wrapper = NewObject<USpudStreamingLevelWrapper>(world);
-					wrapper->LevelStreaming = level;
-					MonitoredStreamingLevels.Add(level, wrapper);
-					level->OnLevelShown.AddUniqueDynamic(wrapper, &USpudStreamingLevelWrapper::OnLevelShown);
-					level->OnLevelHidden.AddUniqueDynamic(wrapper, &USpudStreamingLevelWrapper::OnLevelHidden);
-					if (level->IsLevelVisible())
-						wrapper->OnLevelShown();
-				}
-			}
-
-			// Discard unloaded levels.
-			for (auto it = MonitoredStreamingLevels.CreateIterator(); it; ++it)
-			{
-				if (!streamingLevels.Contains(it.Key()))
-				{
-					UE_LOG(LogSpudSubsystem, Verbose, TEXT("Unloaded streaming level: %s"), *GetNameSafe(it.Key()));
-					check(!it.Key()->IsLevelVisible());
-					it.Key()->OnLevelShown.RemoveAll(it.Value());
-					it.Key()->OnLevelHidden.RemoveAll(it.Value());
-					it.RemoveCurrent();
-				}
-			}
-		}
-	}
 }
 
 ETickableTickType USpudSubsystem::GetTickableTickType() const
@@ -1259,41 +1097,3 @@ TStatId USpudSubsystem::GetStatId() const
 
 
 // FTickableGameObject end
-
-void USpudStreamingLevelWrapper::OnLevelShown()
-{
-	const auto level = LevelStreaming->GetLoadedLevel();
-	if (level)
-	{
-		UE_LOG(LogSpudSubsystem, Verbose, TEXT("Level shown: %s"), *USpudState::GetLevelName(level));
-		
-		auto spud = UGameInstance::GetSubsystem<USpudSubsystem>(GetWorld()->GetGameInstance());
-		if (ensureMsgf(spud, TEXT("Unable to find SpudSubsystem, so cannot load the state of level: %s"), *USpudState::GetLevelName(level)))
-		{
-			spud->HandleLevelLoaded(level);
-		}
-	}
-	else
-		UE_LOG(LogSpudSubsystem, Verbose, TEXT("No loaded level"));
-}
-
-void USpudStreamingLevelWrapper::OnLevelHidden()
-{
-	const auto level = LevelStreaming->GetLoadedLevel();
-	if (level)
-	{
-		const auto levelName = USpudState::GetLevelName(level);
-		UE_LOG(LogSpudSubsystem, Verbose, TEXT("Level hidden: %s"), *levelName);
-		
-		// We no longer crash, but we still need to know when this happens, as we really should be
-		// storing the state of the unloaded level
-		auto spud = UGameInstance::GetSubsystem<USpudSubsystem>(GetWorld()->GetGameInstance());
-		if (ensureMsgf(spud, TEXT("Unable to find SpudSubsystem, so cannot save the state of level: %s"), *levelName))
-		{
-			spud->PreUnloadStreamingLevel.Broadcast(FName(levelName));
-			spud->HandleLevelUnloaded(level);
-		}
-	}
-	else
-		UE_LOG(LogSpudSubsystem, Verbose, TEXT("No loaded level"));
-}

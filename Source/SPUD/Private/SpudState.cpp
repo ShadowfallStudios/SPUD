@@ -343,6 +343,15 @@ FSpudNamedObjectData* USpudState::GetGlobalObjectData(const FString& ID, bool Au
 	return Ret;
 }
 
+bool USpudState::ShouldActorSkipDuringLevelRestore(AActor* Actor) const
+{
+	if (Actor->Implements<USpudObject>())
+	{
+		return ISpudObject::Execute_ShouldSkipDuringLevelRestore(Actor);
+	}
+	return false;
+}
+
 
 void USpudState::StoreGlobalObject(UObject* Obj)
 {
@@ -448,7 +457,7 @@ void USpudState::RestoreLevel(ULevel* Level)
 	// Restore existing actor state
 	for (auto Actor : Level->Actors)
 	{
-		if (SpudPropertyUtil::IsPersistentObject(Actor))
+		if (SpudPropertyUtil::IsPersistentObject(Actor) && !ShouldActorSkipDuringLevelRestore(Actor))
 		{
 			RestoreActor(Actor, LevelData, &RuntimeObjectsByGuid);
 			auto Guid = SpudPropertyUtil::GetGuidProperty(Actor);
@@ -484,7 +493,7 @@ void USpudState::RestoreActor(AActor* Actor)
 	auto LevelData = GetLevelData(LevelName, false);
 	if (!LevelData.IsValid())
 	{
-		UE_LOG(LogSpudState, Error, TEXT("Unable to restore Actor %s, missing level data"), *Actor->GetName());
+		UE_LOG(LogSpudState, Verbose, TEXT("Nothing to load for Actor %s"), *Actor->GetName());
 		return;
 	}
 

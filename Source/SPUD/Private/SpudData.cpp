@@ -1147,7 +1147,7 @@ void FSpudSaveData::DeleteAllLevelDataFiles(const FString& LevelPath)
 
 FString FSpudSaveData::GetLevelDataPath(const FString& LevelPath, const FString& LevelName)
 {
-	return FString::Printf(TEXT("%s%s.lvl"), *LevelPath, *LevelName);		
+	return FString::Printf(TEXT("%s%s.lvl"), *LevelPath, *LevelName);
 }
 
 void FSpudSaveData::WriteLevelData(FSpudLevelData& LevelData, const FString& LevelName, const FString& LevelPath)

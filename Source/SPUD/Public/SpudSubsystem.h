@@ -12,23 +12,23 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(LogSpudSubsystem, Verbose, Verbose);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreLoadGame, const FString&, SlotName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSpudPostLoadGame, const FString&, SlotName, bool, bSuccess);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreSaveGame, const FString&, SlotName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSpudPostSaveGame, const FString&, SlotName, bool, bSuccess);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreLoadGame, const FString& /** SlotName */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FSpudPostLoadGame, const FString& /** SlotName */, bool /** bSuccess */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreSaveGame, const FString& /** SlotName */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FSpudPostSaveGame, const FString& /** SlotName */, bool /** bSuccess */);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreLevelStore, const FString&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSpudPostLevelStore, const FString&, LevelName, bool, bSuccess);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreLevelRestore, const FString&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSpudPostLevelRestore, const FString&, LevelName, bool, bSuccess);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreLevelStore, const FString& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FSpudPostLevelStore, const FString& /** LevelName */, bool /** bSuccess */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreLevelRestore, const FString& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FSpudPostLevelRestore, const FString& /** LevelName */, bool /** bSuccess */);
 
 /// Helper delegates to allow blueprints to listen in on map transitions & streaming if they want
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreTravelToNewMap, const FString&, NextMapName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSpudPostTravelToNewMap);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreLoadStreamingLevel, const FName&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPostLoadStreamingLevel, const FName&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPreUnloadStreamingLevel, const FName&, LevelName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpudPostUnloadStreamingLevel, const FName&, LevelName);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreTravelToNewMap, const FString& /** NextMapName */);
+DECLARE_MULTICAST_DELEGATE(FSpudPostTravelToNewMap);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreLoadStreamingLevel, const FName& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPostLoadStreamingLevel, const FName& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPreUnloadStreamingLevel, const FName& /** LevelName */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FSpudPostUnloadStreamingLevel, const FName& /** LevelName */);
 
 // Callbacks passed to functions
 DECLARE_DYNAMIC_DELEGATE_RetVal_OneParam(bool, FSpudUpgradeSaveDelegate, class USpudState*, SaveState);
@@ -61,79 +61,43 @@ enum class ESpudSaveSorting : uint8
 	Title
 };
 
-UCLASS(Transient)
-class SPUD_API USpudStreamingLevelWrapper : public UObject
-{
-	GENERATED_BODY()
-
-public:
-	UPROPERTY()
-	ULevelStreaming* LevelStreaming;
-
-	UFUNCTION()
-	void OnLevelShown();
-	UFUNCTION()
-	void OnLevelHidden();
-};
-
 /// Subsystem which controls our save games, and also the active game's persistent state (for streaming levels)
 UCLASS(Config=Engine)
 class SPUD_API USpudSubsystem : public UGameInstanceSubsystem, public FTickableGameObject
 {
 	GENERATED_BODY()
 
-	friend USpudStreamingLevelWrapper;
-
 public:
 	/// Event fired just before a game is loaded
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreLoadGame PreLoadGame;
 	/// Event fired just after a game has finished loading
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostLoadGame PostLoadGame;
 	/// Event fired just before a game is saved
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreSaveGame PreSaveGame;
 	/// Event fired just after a game finished saving
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostSaveGame PostSaveGame;
 	/// Event fired just before we write the contents of a level to the state database
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreLevelStore PreLevelStore;
 	/// Event fired just after we've written the contents of a level to the state database
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostLevelStore PostLevelStore;
 	/// Event fired just before we're about to populate a loaded level from the state database
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreLevelRestore PreLevelRestore;
 	/// Event fired just after we've finished populating a loaded level from the state database
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostLevelRestore PostLevelRestore;
 
 	/// Event fired just prior to travelling to a new map (convenience for blueprints mainly, who don't have access to FCoreDelegates)
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreTravelToNewMap PreTravelToNewMap;
 	/// Event fired just after travelling to a new map (convenience for blueprints mainly, who don't have access to FCoreDelegates)
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostTravelToNewMap PostTravelToNewMap;
 	/// Event fired just before this subsystem loads a streaming level
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreLoadStreamingLevel PreLoadStreamingLevel;
 	/// Event fired just after a streaming level has loaded, but BEFORE any state has been restored
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostLoadStreamingLevel PostLoadStreamingLevel;
 	/// Event fired just before this subsystem unloads a streaming level, BEFORE any state has been stored if needed
 	/// This is ALMOST the same as PreLevelStore, except when loading a game that's not called, but this is
-	UPROPERTY(BlueprintAssignable)
 	FSpudPreUnloadStreamingLevel PreUnloadStreamingLevel;
 	/// Event fired just after a streaming level has unloaded
-	UPROPERTY(BlueprintAssignable)
 	FSpudPostUnloadStreamingLevel PostUnloadStreamingLevel;
-
-	/// The time delay after the last request for a streaming level is withdrawn, that the level will be unloaded
-	/// This is used to reduce load/unload thrashing at boundaries
-	UPROPERTY(BlueprintReadWrite, Config)
-	float StreamLevelUnloadDelay = 3;
 
 	/// The desired width of screenshots taken for save games
 	UPROPERTY(BlueprintReadWrite, Config)
@@ -143,23 +107,11 @@ public:
 	int32 ScreenshotHeight = 135;
 	FDelegateHandle OnScreenshotHandle;
 
-	/// If true, use the show/hide events of streaming levels to save/load, which is compatible with World Partition
-	/// You can set this to false to change to the legacy mode which requires ASpudStreamingVolume
+	// If false, we won't try to save current persistent level's state while jumping/traveling into another persistent level.
 	UPROPERTY(BlueprintReadWrite, Config)
-	bool bSupportWorldPartition = true;
-
+	bool bSaveLevelStateWhileTraveling = false;
 
 protected:
-	FDelegateHandle OnPreLoadMapHandle;
-	FDelegateHandle OnPostLoadMapHandle;
-	FDelegateHandle OnSeamlessTravelHandle;
-	int32 LoadUnloadRequests = 0;
-	bool FirstStreamRequestSinceMapLoad = true;
-	TMap<int32, FName> LevelsPendingLoad;
-	TMap<int32, FName> LevelsPendingUnload;
-	FCriticalSection LevelsPendingLoadMutex;
-	FCriticalSection LevelsPendingUnloadMutex;
-	FTimerHandle StreamLevelUnloadTimerHandle;
 	float ScreenshotTimeout = 0;	
 	FString SlotNameInProgress;
 	FText TitleInProgress;
@@ -176,11 +128,14 @@ protected:
 
 	// True while restoring game state, either by loading a game or restoring the state of a streamed-in level.
 	UPROPERTY(BlueprintReadOnly)
-	bool IsRestoringState = false;
+	bool bIsRestoringState = false;
 
 	/// True when system shutdown has been started
 	UPROPERTY(BlueprintReadOnly)
 	bool bIsTearingDown = false;
+
+	UPROPERTY(BlueprintReadOnly)
+	TMap<FName, bool> LevelStreamingRestoreStates;
 
 	// The currently active game state
 	UPROPERTY()
@@ -194,29 +149,12 @@ protected:
 		return ActiveState;
 	}
 
-	struct FStreamLevelRequests
-	{
-		TArray<TWeakObjectPtr<>> Requesters;
-		bool bPendingUnload;
-		float LastRequestExpiredTime;
-
-		FStreamLevelRequests(): bPendingUnload(false), LastRequestExpiredTime(0)
-		{
-		}
-	};
-	
-	// Map of streaming level names to the requests to load them 
-	TMap<FName, FStreamLevelRequests> LevelRequests;
-
-	UPROPERTY()
-	TMap<ULevelStreaming*, USpudStreamingLevelWrapper*> MonitoredStreamingLevels;
-
 	bool ServerCheck(bool LogWarning) const;
 
 	UFUNCTION()
 	void OnPreLoadMap(const FString& MapName);
 	UFUNCTION()
-	void OnSeamlessTravelTransition(UWorld* World);
+	void OnSeamlessTravelStart(UWorld* World, const FString& MapName);
 	UFUNCTION()
 	void OnPostLoadMap(UWorld* World);
 	UFUNCTION()
@@ -225,12 +163,13 @@ protected:
 	void SubscribeLevelObjectEvents(ULevel* Level);
 	void UnsubscribeLevelObjectEvents(ULevel* Level);
 	void UnsubscribeAllLevelObjectEvents();
+
+	UFUNCTION()
+	void OnLevelBeginMakingInvisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel);
+	UFUNCTION()
+	void OnLevelBeginMakingVisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel);
 	
 	// This is a latent callback and has to be BlueprintCallable
-	UFUNCTION(BlueprintCallable)
-	void PostLoadStreamLevel(int32 LinkID);
-	UFUNCTION(BlueprintCallable)
-    void PostUnloadStreamLevel(int32 LinkID);
 	UFUNCTION(BlueprintCallable)
     void PostLoadStreamLevelGameThread(FName LevelName);
 	UFUNCTION(BlueprintCallable)
@@ -252,19 +191,27 @@ protected:
 	void HandleLevelLoaded(ULevel* Level) { HandleLevelLoaded(FName(USpudState::GetLevelName(Level))); }
 	void HandleLevelUnloaded(ULevel* Level);
 
-	void LoadStreamLevel(FName LevelName, bool Blocking);
-	void StartUnloadTimer();
-	void StopUnloadTimer();
-	void CheckStreamUnload();
-	void UnloadStreamLevel(FName LevelName);
-
 public:
 
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
+	// Loads specific actor from active state. If bAsGameLoad is true, we'll try to load the actor as we were loading a full level save.
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
+	void LoadActorData(AActor* Actor, bool bAsGameLoad = false);
+
+	// Manually mark actor as destroyed
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
+	void MarkActorDestroyed(AActor* Actor);
+
+	UFUNCTION(BlueprintPure)
+	bool IsRestoringState() const { return bIsRestoringState; }
+
 	UFUNCTION(BlueprintPure)
 	bool IsLoadingGame() const { return CurrentState == ESpudSystemState::LoadingGame; }
+
+	UFUNCTION(BlueprintPure)
+	bool IsStreamedLevelRestoring(ULevel* Level) const;
 
 	UFUNCTION(BlueprintPure)
     bool IsSavingGame() const { return CurrentState == ESpudSystemState::SavingGame; }
@@ -395,15 +342,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
 	void ClearLevelState(const FString& LevelName);
-
-	/// Make a request that a streaming level is loaded. Won't load if already loaded, but will
-	/// record the request count so that unloading is done when all requests are withdrawn.
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-	void AddRequestForStreamingLevel(UObject* Requester, FName LevelName, bool BlockingLoad);
-	/// Withdraw a request for a streaming level. Once all requesters have rescinded their requests, the
-	/// streaming level will be considered ready to be unloaded.
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-	void WithdrawRequestForStreamingLevel(UObject* Requester, FName LevelName);
 
 	/// Get the list of the save games with metadata
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)

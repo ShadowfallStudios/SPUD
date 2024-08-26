@@ -103,6 +103,7 @@ protected:
 	FSpudNamedObjectData* GetGlobalObjectData(const UObject* Obj, bool AutoCreate);
 	FSpudNamedObjectData* GetGlobalObjectData(const FString& ID, bool AutoCreate);
 
+	bool ShouldActorSkipDuringLevelRestore(AActor* Actor) const;
 	bool ShouldActorBeRespawnedOnRestore(AActor* Actor) const;
 	bool ShouldActorTransformBeRestored(AActor* Actor) const;
 	bool ShouldActorVelocityBeRestored(AActor* Actor) const;

@@ -135,9 +135,9 @@ void USpudSubsystem::QuickSaveGame(FText Title, bool bTakeScreenshot, const USpu
 		ExtraInfo);
 }
 
-void USpudSubsystem::QuickLoadGame(const FString& TravelOptions)
+void USpudSubsystem::QuickLoadGame(bool bAutoTravelLevel, const FString& TravelOptions)
 {
-	LoadGame(QuickSaveSlotName, TravelOptions);
+	LoadGame(QuickSaveSlotName, bAutoTravelLevel, TravelOptions);
 }
 
 
@@ -161,11 +161,11 @@ void USpudSubsystem::NotifyLevelUnloadedExternally(ULevel* Level)
 	HandleLevelUnloaded(Level);
 }
 
-void USpudSubsystem::LoadLatestSaveGame(const FString& TravelOptions, bool bAutoTravelLevel)
+void USpudSubsystem::LoadLatestSaveGame(bool bAutoTravelLevel, const FString& TravelOptions)
 {
 	auto Latest = GetLatestSaveGame();
 	if (Latest)
-		LoadGame(Latest->SlotName, TravelOptions, bAutoTravelLevel);
+		LoadGame(Latest->SlotName, bAutoTravelLevel, TravelOptions);
 }
 
 void USpudSubsystem::OnPreLoadMap(const FString& MapName)
@@ -540,7 +540,7 @@ void USpudSubsystem::StoreLevel(ULevel* Level, bool bRelease, bool bBlocking)
 	PostLevelStore.Broadcast(LevelName, true);
 }
 
-void USpudSubsystem::LoadGame(const FString& SlotName, const FString& TravelOptions, bool bAutoTravelLevel)
+void USpudSubsystem::LoadGame(const FString& SlotName, bool bAutoTravelLevel, const FString& TravelOptions)
 {
 	if (!ServerCheck(true))
 	{

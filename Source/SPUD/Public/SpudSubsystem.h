@@ -257,17 +257,18 @@ public:
 	
 	/**
 	 * Quick load the game from the last player-requested Quick Save slot (NOT the last autosave or manual save)
+	 * @param bAutoTravelLevel Initiates travel automatically after load
 	 * @param TravelOptions Options string to include in the travel URL e.g. "Listen"
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-    void QuickLoadGame(const FString& TravelOptions = FString(TEXT("")));
+    void QuickLoadGame(bool bAutoTravelLevel = true, const FString& TravelOptions = FString(TEXT("")));
 	
 	/**
 	 * Continue a game from the latest save of any kind - autosave, quick save, manual save. The same as calling LoadGame on the most recent. 
 	 * @param TravelOptions Options string to include in the travel URL e.g. "Listen"
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-    void LoadLatestSaveGame(const FString& TravelOptions = FString(TEXT("")), bool bAutoTravelLevel = true);
+    void LoadLatestSaveGame(bool bAutoTravelLevel = true, const FString& TravelOptions = FString(TEXT("")));
 
 	/// Create a save game descriptor which you can use to store additional descriptive information about a save game.
 	/// Fill the returned object in then pass it to the SaveGame call to have additional info to display on save/load screens
@@ -288,10 +289,11 @@ public:
 	/**
 	 * Load the game in a given slot name. Asynchronous, use the PostLoadGame event to determine when load is complete (and success)
 	 * @param SlotName The slot name of the save to load
+	 * @param bAutoTravelLevel Initiates travel automatically after load
 	 * @param TravelOptions Options string to include in the travel URL e.g. "Listen"
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)
-    void LoadGame(const FString& SlotName, const FString& TravelOptions = FString(TEXT("")), bool bAutoTravelLevel = true);
+    void LoadGame(const FString& SlotName, bool bAutoTravelLevel = true, const FString& TravelOptions = FString(TEXT("")));
 
 	/// Delete the save game in a given slot
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly)

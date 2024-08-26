@@ -6,6 +6,7 @@ public class SPUD : ModuleRules
 	public SPUD(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+		bAllowConfidentialPlatformDefines = true;
 
         PublicIncludePaths.AddRange(
             new string[] {

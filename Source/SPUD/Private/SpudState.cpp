@@ -1,6 +1,5 @@
 #include "SpudState.h"
 
-#include "EngineUtils.h"
 #include "ISpudObject.h"
 #include "SpudPropertyUtil.h"
 #include "SpudSubsystem.h"
@@ -9,9 +8,7 @@
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/MovementComponent.h"
-#include "Kismet/GameplayStatics.h"
 #include "ImageUtils.h"
-#include "..\Public\SpudMemoryReaderWriter.h"
 #include "GameFramework/PlayerState.h"
 
 DEFINE_LOG_CATEGORY(LogSpudState)
@@ -104,24 +101,16 @@ void USpudState::StorePropertyVisitor::StoreNestedUObjectIfNeeded(UObject* RootO
 				// assets from that in a post-load hook, otherwise it just makes your saves fragile / bloated to store derived data
 				checkf(!Obj->IsAsset(), TEXT("Cannot store %s from property %s/%s - Storing links to assets is not supported"),
 					*Obj->GetName(), *RootObject->GetName(), *Property->GetNameCPP());
-
-				const bool IsCallback = Obj->GetClass()->ImplementsInterface(USpudObjectCallback::StaticClass());
-
-				if (IsCallback)
-				{
-					ISpudObjectCallback::Execute_SpudPreStore(Obj, ParentState);
-				}
+				
+				ISpudObject::Execute_SpudPreStore(Obj, ParentState);
 				const uint32 NewPrefixID = GetNestedPrefix(Property, CurrentPrefixID);
 				ParentState->StoreObjectProperties(Obj, NewPrefixID, PropertyOffsets, Meta, Out, Depth+1);
 
-				if (IsCallback)
-				{
-					// No custom data callbacks for nested UObjects, only root ones
-					// This is because nested UObjects don't get their own data package, and could be null sometimes etc,
-					// could interfere with data packing in nasty ways
-					// I *could* store UObjects in their own data wrappers but that becomes cumbersome so don't for now
-					ISpudObjectCallback::Execute_SpudPostStore(Obj, ParentState);					
-				}
+				// No custom data callbacks for nested UObjects, only root ones
+				// This is because nested UObjects don't get their own data package, and could be null sometimes etc,
+				// could interfere with data packing in nasty ways
+				// I *could* store UObjects in their own data wrappers but that becomes cumbersome so don't for now
+				ISpudObject::Execute_SpudPostStore(Obj, ParentState);
 			}
 		}	
 	}
@@ -369,7 +358,6 @@ void USpudState::StoreGlobalObject(UObject* Obj, FSpudNamedObjectData* Data)
 	if (Data)
 	{
 		FSpudClassMetadata& Meta = SaveData.GlobalData.Metadata;
-		const bool bIsCallback = Obj->GetClass()->ImplementsInterface(USpudObjectCallback::StaticClass());
 
 		if (Obj->Implements<USpudObject>() && ISpudObject::Execute_ShouldSkip(Obj))
 		{
@@ -379,22 +367,19 @@ void USpudState::StoreGlobalObject(UObject* Obj, FSpudNamedObjectData* Data)
 
 		UE_LOG(LogSpudState, Verbose, TEXT("* STORE Global object: %s"), *Obj->GetName());
 
-		if (bIsCallback)
-			ISpudObjectCallback::Execute_SpudPreStore(Obj, this);
+		ISpudObject::Execute_SpudPreStore(Obj, this);
 
 		StoreObjectProperties(Obj, Data->Properties, Meta);
 		
-		if (bIsCallback)
+		if (ISpudObject::Execute_HasCustomData(Obj))
 		{
 			Data->CustomData.Data.Empty();
 			FSpudMemoryWriter CustomDataWriter(Data->CustomData.Data);
 			auto CustomDataStruct = NewObject<USpudStateCustomData>();
 			CustomDataStruct->Init(&CustomDataWriter);
-			ISpudObjectCallback::Execute_SpudStoreCustomData(Obj, this, CustomDataStruct);
-			
-			ISpudObjectCallback::Execute_SpudPostStore(Obj, this);
+			ISpudObject::Execute_SpudStoreCustomData(Obj, this, CustomDataStruct);
 		}
-		
+		ISpudObject::Execute_SpudPostStore(Obj, this);
 	}
 }
 
@@ -634,29 +619,25 @@ void USpudState::RestoreActor(AActor* Actor, FSpudSaveData::TLevelDataPtr LevelD
 
 void USpudState::PreRestoreObject(UObject* Obj, uint32 StoredUserVersion)
 {
-	if(Obj->GetClass()->ImplementsInterface(USpudObjectCallback::StaticClass()))
-	{
-		if (GCurrentUserDataModelVersion != StoredUserVersion)
-			ISpudObjectCallback::Execute_SpudPreRestoreDataModelUpgrade(Obj, this, StoredUserVersion, GCurrentUserDataModelVersion);
-			
-		ISpudObjectCallback::Execute_SpudPreRestore(Obj, this);
-		
-	}
+	if (GCurrentUserDataModelVersion != StoredUserVersion)
+		ISpudObject::Execute_SpudPreRestoreDataModelUpgrade(Obj, this, StoredUserVersion, GCurrentUserDataModelVersion);
+
+	ISpudObject::Execute_SpudPreRestore(Obj, this);
 }
 
 void USpudState::PostRestoreObject(UObject* Obj, const FSpudCustomData& FromCustomData, uint32 StoredUserVersion)
 {
-	if (Obj->GetClass()->ImplementsInterface(USpudObjectCallback::StaticClass()))
-	{
-		if (GCurrentUserDataModelVersion != StoredUserVersion)
-			ISpudObjectCallback::Execute_SpudPostRestoreDataModelUpgrade(Obj, this, StoredUserVersion, GCurrentUserDataModelVersion);
+	if (GCurrentUserDataModelVersion != StoredUserVersion)
+		ISpudObject::Execute_SpudPostRestoreDataModelUpgrade(Obj, this, StoredUserVersion, GCurrentUserDataModelVersion);
 
+	if (ISpudObject::Execute_HasCustomData(Obj))
+	{
 		FSpudMemoryReader Reader(FromCustomData.Data);
 		auto CustomData = NewObject<USpudStateCustomData>();
 		CustomData->Init(&Reader);
-		ISpudObjectCallback::Execute_SpudRestoreCustomData(Obj, this, CustomData);
-		ISpudObjectCallback::Execute_SpudPostRestore(Obj, this);
+		ISpudObject::Execute_SpudRestoreCustomData(Obj, this, CustomData);
 	}
+	ISpudObject::Execute_SpudPostRestore(Obj, this);
 }
 
 void USpudState::RestoreCoreActorData(AActor* Actor, const FSpudCoreActorData& FromData)
@@ -841,23 +822,15 @@ void USpudState::RestorePropertyVisitor::RestoreNestedUObjectIfNeeded(UObject* R
 			// property before this contains the class (or null)
 			if (Obj)
 			{
-				const bool IsCallback = Obj->GetClass()->ImplementsInterface(USpudObjectCallback::StaticClass());
-
-				if (IsCallback)
-				{
-					ISpudObjectCallback::Execute_SpudPreRestore(Obj, ParentState);
-				}
+				ISpudObject::Execute_SpudPreRestore(Obj, ParentState);
 				const uint32 NewPrefixID = GetNestedPrefix(Property, CurrentPrefixID);
 				ParentState->RestoreObjectProperties(Obj, DataIn, Meta, RuntimeObjects, Depth+1);
 
-				if (IsCallback)
-				{
-					// No custom data callbacks for nested UObjects, only root ones
-					// This is because nested UObjects don't get their own data package, and could be null sometimes etc,
-					// could interfere with data packing in nasty ways
-					// I *could* store UObjects in their own data wrappers but that becomes cumbersome so don't for now
-					ISpudObjectCallback::Execute_SpudPostRestore(Obj, ParentState);					
-				}
+				// No custom data callbacks for nested UObjects, only root ones
+				// This is because nested UObjects don't get their own data package, and could be null sometimes etc,
+				// could interfere with data packing in nasty ways
+				// I *could* store UObjects in their own data wrappers but that becomes cumbersome so don't for now
+				ISpudObject::Execute_SpudPostRestore(Obj, ParentState);			
 			}
 		}
 	}	
@@ -1054,11 +1027,8 @@ void USpudState::StoreActor(AActor* Actor, FSpudSaveData::TLevelDataPtr LevelDat
 		UE_LOG(LogSpudState, Verbose, TEXT(" * STORE Runtime Actor: %s (%s)"), *Guid.ToString(EGuidFormats::DigitsWithHyphens), *Name)
 	else
 		UE_LOG(LogSpudState, Verbose, TEXT(" * STORE Level Actor: %s/%s"), *LevelData->Name, *Name);
-
-	bool bIsCallback = Actor->GetClass()->ImplementsInterface(USpudObjectCallback::StaticClass());
-
-	if (bIsCallback)
-		ISpudObjectCallback::Execute_SpudPreStore(Actor, this);
+	
+	ISpudObject::Execute_SpudPreStore(Actor, this);
 
 	// Core data first
 	pDestCoreData->Empty();
@@ -1068,7 +1038,7 @@ void USpudState::StoreActor(AActor* Actor, FSpudSaveData::TLevelDataPtr LevelDat
 	// Now properties, visit all and write out
 	StoreObjectProperties(Actor, *pDestProperties, Meta);
 
-	if (bIsCallback)
+	if (ISpudObject::Execute_HasCustomData(Actor))
 	{
 		if (pDestCustomData)
 		{
@@ -1076,11 +1046,11 @@ void USpudState::StoreActor(AActor* Actor, FSpudSaveData::TLevelDataPtr LevelDat
 			FSpudMemoryWriter CustomDataWriter(*pDestCustomData);
 			auto CustomDataStruct = NewObject<USpudStateCustomData>();
 			CustomDataStruct->Init(&CustomDataWriter);
-			ISpudObjectCallback::Execute_SpudStoreCustomData(Actor, this, CustomDataStruct);
-		}			
-	
-		ISpudObjectCallback::Execute_SpudPostStore(Actor, this);
+			ISpudObject::Execute_SpudStoreCustomData(Actor, this, CustomDataStruct);
+		}
 	}
+
+	ISpudObject::Execute_SpudPostStore(Actor, this);
 }
 
 

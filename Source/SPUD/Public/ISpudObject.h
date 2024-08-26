@@ -67,23 +67,10 @@ public:
 	// Allows skipping loading actors during level restore. Use this if you need to restore an actor individually after actual load process.
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD Interface")
 	bool ShouldSkipDuringLevelRestore() const; virtual bool ShouldSkipDuringLevelRestore_Implementation() const { return false; }
-};
 
-UINTERFACE(MinimalAPI)
-class USpudObjectCallback : public UInterface
-{
-	GENERATED_BODY()
-};
-
-/**
-* Interface for fine control of persistence. Implement this in your objects to be notified when they are persisted or
-* restored individually, and to include custom data in your stored records if you want.
-*/
-class SPUD_API ISpudObjectCallback
-{
-	GENERATED_BODY()
-
-public:
+	// Allows calling SpudStoreCustomData / SpudRestoreCustomData interface functions during save/load.
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD Interface")
+	bool HasCustomData() const; virtual bool HasCustomData_Implementation() const { return false; }
 
 	// --- IMPORTANT ---
 	// WEIRD ASS PROBLEM: Passing USpudState to any of these interface methods, when it was a USaveGame with
@@ -144,5 +131,4 @@ public:
 	/// This is called for root objects and nested UObjects
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "SPUD")
     void SpudPostRestore(const USpudState* State);
-
 };

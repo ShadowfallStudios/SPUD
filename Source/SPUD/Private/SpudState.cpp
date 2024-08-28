@@ -409,7 +409,17 @@ void USpudState::StoreObjectProperties(UObject* Obj, uint32 PrefixID, TArray<uin
 
 void USpudState::RestoreLevel(UWorld* World, const FString& LevelName)
 {
-	RestoreLoadedWorld(World, true, LevelName);
+	RestoreLoadedWorld(World, LevelName);
+}
+
+bool USpudState::CanRestoreLevel(ULevel* Level)
+{
+	if (!IsValid(Level))
+	{
+		return false;
+	}
+	auto LevelData = GetLevelData(GetLevelName(Level), false);
+	return LevelData.IsValid();
 }
 
 void USpudState::RestoreLevel(ULevel* Level)
@@ -466,6 +476,30 @@ bool USpudState::PreLoadLevelData(const FString& LevelName)
 	// Don't auto-create, but do load if needed
 	auto Data = GetLevelData(LevelName, false);
 	return Data != nullptr;
+}
+
+bool USpudState::CanRestoreWorld(UWorld* World, const FString& OnlyLevelName)
+{
+	if (!IsValid(World))
+	{
+		return false;
+	}
+	
+	bool bNeedsRestore = false;
+	for (auto& Level : World->GetLevels())
+	{
+		if (!OnlyLevelName.IsEmpty() && GetLevelName(Level) != OnlyLevelName)
+		{
+			continue;
+		}
+
+		if (CanRestoreLevel(Level))
+		{
+			bNeedsRestore = true;
+			break;
+		}
+	}
+	return bNeedsRestore;
 }
 
 void USpudState::RestoreActor(AActor* Actor)
@@ -904,12 +938,7 @@ bool USpudState::RestoreSlowPropertyVisitor::VisitProperty(UObject* RootObject, 
 	return true;
 }
 
-void USpudState::RestoreLoadedWorld(UWorld* World)
-{
-	RestoreLoadedWorld(World, false);
-}
-
-void USpudState::RestoreLoadedWorld(UWorld* World, bool bSingleLevel, const FString& OnlyLevel)
+void USpudState::RestoreLoadedWorld(UWorld* World, const FString& OnlyLevel)
 {
 	// So that we don't need to check every instance of a class for matching stored / runtime class properties
 	// we will keep a cache of whether to use the fast or slow path. It's only valid for this specific load
@@ -920,7 +949,7 @@ void USpudState::RestoreLoadedWorld(UWorld* World, bool bSingleLevel, const FStr
 		if (!IsValid(Level))
 			continue;
 
-		if (bSingleLevel && GetLevelName(Level) != OnlyLevel)
+		if (!OnlyLevel.IsEmpty() && GetLevelName(Level) != OnlyLevel)
 			continue;
 
 		RestoreLevel(Level);

@@ -168,6 +168,9 @@ protected:
 	void UnsubscribeLevelObjectEvents(ULevel* Level);
 	void UnsubscribeAllLevelObjectEvents();
 
+	bool CanRestoreLevel(ULevel* Level);
+	bool CanRestoreWorld(UWorld* World);
+
 	UFUNCTION()
 	void OnLevelBeginMakingInvisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel);
 	UFUNCTION()

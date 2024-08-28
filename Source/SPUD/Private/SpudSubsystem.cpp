@@ -251,24 +251,39 @@ void USpudSubsystem::OnPostLoadMap(UWorld* World)
 		if (IsValid(World)) // nullptr seems possible if load is aborted or something?
 		{
 			const FString LevelName = UGameplayStatics::GetCurrentLevelName(World);
-			UE_LOG(LogSpudSubsystem,
-			       Verbose,
-			       TEXT("OnPostLoadMap restore: %s"),
-			       *LevelName);
+			if (CanRestoreWorld(World))
+			{
+				UE_LOG(LogSpudSubsystem,
+								   Verbose,
+								   TEXT("OnPostLoadMap restore: %s"),
+								   *LevelName);
 
-			bIsRestoringState = true;
+				bIsRestoringState = true;
 
-			const auto State = GetActiveState();
-			PreLevelRestore.Broadcast(LevelName);
-			State->RestoreLoadedWorld(World);
-			PostLevelRestore.Broadcast(LevelName, true);
+				const auto State = GetActiveState();
+				PreLevelRestore.Broadcast(LevelName);
+				State->RestoreLoadedWorld(World);
+				PostLevelRestore.Broadcast(LevelName, true);
 
-			bIsRestoringState = false;
-			// We need to subscribe to ALL currently loaded levels, because of "AlwaysLoaded" sublevels
-			SubscribeAllLevelObjectEvents();
+				bIsRestoringState = false;
 
-			LoadComplete(SlotNameInProgress, true);
-			UE_LOG(LogSpudSubsystem, Log, TEXT("Load: Success"));
+				// We need to subscribe to ALL currently loaded levels, because of "AlwaysLoaded" sublevels
+				SubscribeAllLevelObjectEvents();
+
+				LoadComplete(SlotNameInProgress, true);
+				UE_LOG(LogSpudSubsystem, Log, TEXT("Load: Success"));
+			}
+			else
+			{
+				UE_LOG(LogSpudState, Log, TEXT("Skipping restore of world %s, no saved data."), *LevelName);
+
+				// We need to subscribe to ALL currently loaded levels, because of "AlwaysLoaded" sublevels
+				SubscribeAllLevelObjectEvents();
+
+				LoadComplete(SlotNameInProgress, false);
+
+				UE_LOG(LogSpudSubsystem, Log, TEXT("Load: Skipped"));
+			}
 		}
 		break;
 	default:
@@ -713,6 +728,7 @@ void USpudSubsystem::PostLoadStreamLevelGameThread(FName LevelName)
 	if (StreamLevel)
 	{
 		ULevel* Level = StreamLevel->GetLoadedLevel();
+		
 		if (!Level)
 		{
 			UE_LOG(LogSpudSubsystem, Log, TEXT("PostLoadStreamLevel called for %s but level is null; probably unloaded again?"), *LevelName.ToString());
@@ -787,6 +803,16 @@ void USpudSubsystem::UnsubscribeAllLevelObjectEvents()
 	}
 }
 
+bool USpudSubsystem::CanRestoreLevel(ULevel* Level)
+{
+	return GetActiveState()->CanRestoreLevel(Level);
+}
+
+bool USpudSubsystem::CanRestoreWorld(UWorld* World)
+{
+	return GetActiveState()->CanRestoreWorld(World);
+}
+
 void USpudSubsystem::OnLevelBeginMakingInvisible(UWorld* World, const ULevelStreaming* StreamingLevel, ULevel* LoadedLevel)
 {
 	if (!ServerCheck(true) || World->IsNetMode(NM_Client))
@@ -810,6 +836,13 @@ void USpudSubsystem::OnLevelBeginMakingVisible(UWorld* World, const ULevelStream
 
 	const FString LevelNameStr = USpudState::GetLevelName(LoadedLevel);
 	UE_LOG(LogSpudSubsystem, Verbose, TEXT("Level shown: %s"), *LevelNameStr);
+
+	// Early return if we do not have anything to load. So we won't change load state
+	if (!CanRestoreLevel(LoadedLevel))
+	{
+		UE_LOG(LogSpudState, Log, TEXT("Skipping restore of streaming level %s, no saved data."), *LevelNameStr);
+		return;
+	}
 
 	const FName LevelName = FName(LevelNameStr);
 	LevelStreamingRestoreStates.Add(LevelName, true);

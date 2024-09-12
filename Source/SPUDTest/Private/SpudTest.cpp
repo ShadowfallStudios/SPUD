@@ -3,6 +3,7 @@
 #include "TestSaveObject.h"
 #include "Engine/PointLight.h"
 #include "Engine/StaticMeshActor.h"
+#include "StructUtils/InstancedStruct.h"
 
 
 template<typename T>

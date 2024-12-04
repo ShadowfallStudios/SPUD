@@ -262,7 +262,8 @@ void USpudSubsystem::OnPostLoadMap(UWorld* World)
 
 				const auto State = GetActiveState();
 				PreLevelRestore.Broadcast(LevelName);
-				State->RestoreLoadedWorld(World);
+				// Only load main level. If there are initially visible sub-levels in world, they should be loaded with streamed level callbacks. Otherwise those levels will get loaded twice.
+				State->RestoreLoadedWorld(World, LevelName);
 				PostLevelRestore.Broadcast(LevelName, true);
 
 				bIsRestoringState = false;
